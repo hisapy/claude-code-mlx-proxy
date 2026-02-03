@@ -1,32 +1,28 @@
-import os
-from dotenv import load_dotenv
-from typing import Optional
-
-load_dotenv()
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-class Config:
+class Settings(BaseSettings):
     """Configuration for the Claude Code MLX Proxy"""
 
+    # Read ENV vars from an .env file
+    model_config = SettingsConfigDict(env_file=".env")
+
     # Server settings
-    HOST: str = os.getenv("HOST", "0.0.0.0")
-    PORT: int = int(os.getenv("PORT", "8888"))
+    host: str = "0.0.0.0"
+    port: int = 8888
 
     # Model settings
-    MODEL_NAME: str = os.getenv("MODEL_NAME", "mlx-community/GLM-4.5-Air-3bit")
-    TRUST_REMOTE_CODE: bool = os.getenv("TRUST_REMOTE_CODE", "false").lower() == "true"
-    EOS_TOKEN: Optional[str] = os.getenv("EOS_TOKEN")
+    model_name: str = "mlx-community/GLM-4.5-Air-3bit"
+    trust_remote_code: bool = False
+    eos_token: str | None = None
 
     # Generation settings
-    DEFAULT_MAX_TOKENS: int = int(os.getenv("DEFAULT_MAX_TOKENS", "4096"))
-    DEFAULT_TEMPERATURE: float = float(os.getenv("DEFAULT_TEMPERATURE", "1.0"))
-    DEFAULT_TOP_P: float = float(os.getenv("DEFAULT_TOP_P", "1.0"))
+    default_max_tokens: int = 4096
+    default_temperature: float = 1.0
+    default_top_p: float = 1.0
 
-    # API settings
-    API_MODEL_NAME: str = os.getenv("API_MODEL_NAME", "claude-4-sonnet-20250514")
-
-    # Logging
-    VERBOSE: bool = os.getenv("VERBOSE", "false").lower() == "true"
+    # Verbosity
+    verbose: bool = False
 
 
-config = Config()
+settings = Settings()
