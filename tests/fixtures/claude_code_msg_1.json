@@ -1,0 +1,37 @@
+{
+  "model": "claude-haiku-4-5-20251001",
+  "max_tokens": 32000,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "who are you?"
+        }
+      ]
+    }
+  ],
+  "system": [
+    {
+      "type": "text",
+      "text": "You are Claude Code, Anthropic's official CLI for Claude."
+    },
+    {
+      "type": "text",
+      "text": "Analyze if this message indicates a new conversation topic. If it does, extract a 2-3 word title that captures the new topic. Format your response as a JSON object with two fields: 'isNewTopic' (boolean) and 'title' (string, or null if isNewTopic is false)."
+    }
+  ],
+  "stop_sequences": null,
+  "stream": true,
+  "temperature": 1.0,
+  "top_p": null,
+  "top_k": null,
+  "metadata": {
+    "user_id": "user_d4500da1cfeaae101fa89f00b404542ebd4998ae2f2025e804ff0d543ab31355_account__session_3f0a5c00-0d28-4176-acb9-2b2c9e4b23a3"
+  },
+  "tools": [],
+  "tool_choice": null,
+  "thinking": null,
+  "original_model": null
+}
