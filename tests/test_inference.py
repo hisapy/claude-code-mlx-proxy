@@ -33,27 +33,41 @@ def test_parse_claude_system_prompt(params):
 def test_parse_claude_messages(params):
     result: ChatParams = parse_claude_message_params(params)
 
-    assert len(params.messages)
-    non_system_messages = enumerate(params.messages, len(params.system))
-    for i, msg in non_system_messages:
-        assert result.messages[i]["role"] == msg.role
+    # In MLX(transformers) format the system prompt is at the beginning of the conversation
+    result_messages = result.messages[len(params.system) :]
 
-        for j, c in enumerate(msg.content):
-            assert result.messages[i]["content"][j]["type"] == c.type
+    assert len(result_messages)
+
+    for i, m in enumerate(params.messages):
+        expected_role = m.role
+
+        for j, c in enumerate(m.content):
             if c.type == "text":
-                assert result.messages[i]["content"][j]["text"] == c.text
+                assert result_messages[i]["content"][j] == {
+                    "type": "text",
+                    "text": c.text,
+                }
 
-        # if {"type": "tool_result"} in [{"type": c.type} for c in msg.content]:
-        #     assert result.messages[i] == {"role": msg.role, "content": msg.content}
+            elif c.type == "image":
+                assert result.messages[i]["content"][j] == {
+                    "type": "image",
+                    "url": c.source,
+                }
+
+            # elif c.type == "tool_result":
+            #     assert result.messages[i]["content"][j]["url"] == c.
+            #     expected_role = "tool"
+
+        assert result_messages[i]["role"] == expected_role
 
 
-# def test_parse_claude_tools():
-#     pass
+def test_parse_claude_tools(params):
+    pass
 
 
-# def test_parse_claude_max_tokens():
-#     pass
+def test_parse_claude_max_tokens():
+    pass
 
 
-# def test_build_prompt():
-#     pass
+def test_build_prompt():
+    pass
