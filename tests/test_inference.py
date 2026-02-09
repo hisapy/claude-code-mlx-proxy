@@ -38,10 +38,10 @@ def test_parse_claude_messages(params):
 
     assert len(result_messages)
 
-    for i, m in enumerate(params.messages):
-        expected_role = m.role
+    for i, msg in enumerate(params.messages):
+        expected_role = msg.role
 
-        for j, c in enumerate(m.content):
+        for j, c in enumerate(msg.content):
             if c.type == "text":
                 assert result_messages[i]["content"][j] == {
                     "type": "text",
@@ -62,7 +62,20 @@ def test_parse_claude_messages(params):
 
 
 def test_parse_claude_tools(params):
-    pass
+    result: ChatParams = parse_claude_message_params(params)
+
+    if not params.tools:
+        assert result.tools == None
+    else:
+        for i, tool in enumerate(params.tools):
+            assert result.tools[i] == {
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.input_schema,
+                },
+            }
 
 
 def test_parse_claude_max_tokens():

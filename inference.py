@@ -28,21 +28,10 @@ def load_llm(model_name: str, trust_remote_code: bool):
     return model, tokenizer
 
 
-class ToolFunctionParametersProperties(TypedDict):
-    type: str
-    description: str
-
-
-class ToolFunctionParameters(TypedDict):
-    type: str
-    properties: Dict[str, ToolFunctionParametersProperties]
-    required: list[str]
-
-
 class ToolFunction(TypedDict):
     name: str
     description: str
-    parameters: ToolFunctionParameters
+    parameters: dict
 
 
 class ToolUse(TypedDict):
@@ -61,7 +50,7 @@ class ChatParams(BaseModel):
     """
 
     messages: list[Message]
-    tools: list[ToolUse] = []
+    tools: Optional[list[ToolUse]] = None
     max_tokens: int
     sampler: Optional[object] = None
     thinking_enabled: bool = False
@@ -71,7 +60,7 @@ def parse_claude_message_params(params: ClaudeMessageParams) -> ChatParams:
     return ChatParams(
         messages=_parse_messages(params),
         max_tokens=4069,
-        # tools=_parse_tools(params),
+        tools=_parse_tools(params),
         # max_tokens=_parse_max_tokens(params),
         # sampler = make_sampler(params.temperature, params.top_p, params.top_k)
     )
@@ -135,9 +124,12 @@ def _parse_tools(params: ClaudeMessageParams):
     for tool in params.tools:
         tools.append(
             {
-                "name": tool.name,
-                "description": tool.description,
-                "parameters": tool.input_schema,
+                "type": "function",
+                "function": {
+                    "name": tool.name,
+                    "description": tool.description,
+                    "parameters": tool.input_schema,
+                },
             }
         )
     return tools
