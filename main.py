@@ -13,7 +13,13 @@ from schemas import (
     ClaudeMessage,
     ClaudeTokenCount,
 )
-from inference import claude_chat, claude_chat_stream, claude_tokens_count, load_llm
+from inference import (
+    claude_chat,
+    claude_chat_stream,
+    claude_tokens_count,
+    load_llm,
+    parse_claude_message_params,
+)
 
 
 # NOTICE: Actually, thgst code is not just a proxy, it also loads/starts the LLM.

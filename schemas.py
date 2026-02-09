@@ -26,11 +26,6 @@ class SystemContent(BaseModel):
     text: str
 
 
-class ThinkingConfig(BaseModel):
-    budget_tokens: Optional[int]
-    type: Literal["enabled", "disabled"] = "disabled"
-
-
 class Tool(BaseModel):
     name: str
     description: Optional[str] = None
@@ -58,7 +53,7 @@ class ClaudeMessageParams(BaseModel):
     stream: Optional[bool] = False
     system: Optional[Union[str, list[SystemContent]]] = None
     temperature: Optional[float] = 1.0
-    thinking: Optional[ThinkingConfig] = None
+    thinking: Optional[dict] = None
     tool_choice: Optional[Dict[str, Any]] = None
     tools: Optional[list[Tool]] = None
     top_p: Optional[float] = None
@@ -71,7 +66,7 @@ class ClaudeTokenCountParams(BaseModel):
     messages: list[Message]
     system: Optional[Union[str, list[SystemContent]]] = None
     tools: Optional[list[Tool]] = None
-    thinking: Optional[ThinkingConfig] = None
+    thinking: Optional[dict] = None
     tool_choice: Optional[Dict[str, Any]] = None
     original_model: Optional[str] = None
 

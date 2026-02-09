@@ -53,15 +53,15 @@ class ChatParams(BaseModel):
     tools: Optional[list[ToolUse]] = None
     max_tokens: int
     sampler: Optional[object] = None
-    thinking_enabled: bool = False
+    enable_thinking: bool = False
 
 
 def parse_claude_message_params(params: ClaudeMessageParams) -> ChatParams:
     return ChatParams(
         messages=_parse_messages(params),
-        max_tokens=4069,
         tools=_parse_tools(params),
-        # max_tokens=_parse_max_tokens(params),
+        enable_thinking=_parse_thinking(params),
+        max_tokens=params.max_tokens,
         # sampler = make_sampler(params.temperature, params.top_p, params.top_k)
     )
 
@@ -135,9 +135,12 @@ def _parse_tools(params: ClaudeMessageParams):
     return tools
 
 
-def _parse_max_tokens(params: ClaudeMessageParams):
-    max_tokens = 4096
-    return max_tokens
+def _parse_thinking(params: ClaudeMessageParams):
+    if not params.thinking or params.thinking.get("type") == "disabled":
+        return False
+
+    if params.thinking:
+        return True
 
 
 def claude_chat(model, tokenizer, params: ChatParams):
@@ -182,7 +185,7 @@ def build_prompt(tokenizer, chat: ChatParams):
     return tokenizer.apply_chat_template(
         chat.messages,
         tools=chat.tools,
-        enable_thinking=chat.thinking_enabled,
+        enable_thinking=chat.enable_thinking,
         add_generation_prompt=True,  # TODO: what happens with a "PREFILL response" in the request?
         tokenize=True,  # True because not adding special tokens
     )

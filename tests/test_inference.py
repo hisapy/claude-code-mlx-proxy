@@ -78,8 +78,24 @@ def test_parse_claude_tools(params):
             }
 
 
-def test_parse_claude_max_tokens():
-    pass
+def test_parse_enable_thinking(params):
+    # Deprecated thinking format
+    params.thinking = {
+        "type": "enabled",
+        "budget_tokens": 1024,
+    }
+    result: ChatParams = parse_claude_message_params(params)
+    assert result.enable_thinking
+
+    params.thinking = {"type": "adaptive"}
+
+    params.thinking = {"type": "disabled"}
+    result: ChatParams = parse_claude_message_params(params)
+    assert not result.enable_thinking
+
+    params.thinking = None
+    result: ChatParams = parse_claude_message_params(params)
+    assert not result.enable_thinking
 
 
 def test_build_prompt():
