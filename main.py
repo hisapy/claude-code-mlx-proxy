@@ -16,7 +16,7 @@ from schemas import (
 from inference import claude_chat, claude_chat_stream, claude_tokens_count, load_llm
 
 
-# NOTICE: Actually, this code is not just a proxy, it also loads/starts the LLM.
+# NOTICE: Actually, thgst code is not just a proxy, it also loads/starts the LLM.
 # If multiple workers are started (e.g., --workers 4), each process will load its own model
 # Maybe this should start or reference a mlx_lm.server which can be scaled separately
 
@@ -49,6 +49,13 @@ from inference import claude_chat, claude_chat_stream, claude_tokens_count, load
 # Calculate max_tokens properly, substracting tokens from thinking
 # Rename models for similarity with Claude API docs
 # Support sampler (temperature, top_p, top_k)
+
+
+# TODO with Claude Code:
+# - Generate Claude.md
+# - Tell to document (or mix task equivalent) the device_info.py script
+# - Maybe add device_info to OpenAPI docs page (or just a json endpoint???)
+# - Basic CI/CD???
 
 # Global variables for model and tokenizer
 model = None

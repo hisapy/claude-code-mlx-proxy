@@ -1,12 +1,17 @@
-import logging
 from typing import Dict, TypedDict, Literal, Optional
 from pydantic import BaseModel
 
+import logging
 
 from mlx_lm import load, generate, stream_generate
 from mlx_lm.sample_utils import make_sampler
 
-from schemas import ClaudeMessageParams
+from schemas import (
+    ClaudeMessageParams,
+    TextBlockParam,
+    ImageBlockParam,
+    ToolResultBlockParam,
+)
 from config import settings
 
 logger = logging.getLogger(__name__)
@@ -47,7 +52,7 @@ class ToolUse(TypedDict):
 
 class Message(TypedDict):
     role: str
-    content: str
+    content: list[dict]
 
 
 class ChatParams(BaseModel):
@@ -64,7 +69,7 @@ class ChatParams(BaseModel):
 
 def parse_claude_message_params(params: ClaudeMessageParams) -> ChatParams:
     return ChatParams(
-        messages=_parse_conversation(params),
+        messages=_parse_messages(params),
         max_tokens=4069,
         # tools=_parse_tools(params),
         # max_tokens=_parse_max_tokens(params),
@@ -72,17 +77,55 @@ def parse_claude_message_params(params: ClaudeMessageParams) -> ChatParams:
     )
 
 
-def _parse_conversation(params: ClaudeMessageParams):
-    messges = []
-    system_prompt = params.system
+def _parse_messages(params: ClaudeMessageParams):
+    # Put system prompt at the beginning of the chat
+    # See https://huggingface.co/docs/transformers/en/chat_templating#using-applychattemplate
+    return [
+        *_parse_system_prompt(params.system),
+        *_parse_conversation(params.messages),
+    ]
 
-    if isinstance(system_prompt, str):
-        messges.append({"role": "system", "content": system_prompt})
-    else:  # is a list
-        for msg in system_prompt:
-            messges.append({"role": "system", "content": msg.text})
 
-    return messges
+def _parse_system_prompt(claude_system_prompt):
+    messages = []
+    if isinstance(claude_system_prompt, str):
+        messages.append(
+            {
+                "role": "system",
+                "content": [{"type": "text", "text": claude_system_prompt}],
+            }
+        )
+    else:
+        for msg in claude_system_prompt:
+            messages.append(
+                {"role": "system", "content": [{"type": "text", "text": msg.text}]}
+            )
+
+    return messages
+
+
+def _parse_conversation(claude_messages):
+    messages = []
+    for msg in claude_messages:
+        parsed_content = []
+        role = msg.role
+
+        for c in msg.content:
+            if isinstance(c, TextBlockParam):
+                parsed_content.append({"type": "text", "text": c.text})
+            elif isinstance(c, ImageBlockParam):
+                parsed_content.append({"type": "image", "url": c.source})
+            # elif isinstance(c, ToolResultBlockParam):
+            #     # When a tool_result is received, the role should be tool
+            #     # See https://huggingface.co/docs/transformers/en/chat_extras#tool-calling-example
+            #     parsed_content.append({"type": "tool_result", "content": c.content})
+            #     role = "tool"
+            else:
+                raise TypeError("Can't parse unknown content type in Claude message")
+
+        messages.append({"role": role, "content": parsed_content})
+
+    return messages
 
 
 def _parse_tools(params: ClaudeMessageParams):

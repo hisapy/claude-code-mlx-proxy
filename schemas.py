@@ -15,13 +15,6 @@ class ImageBlockParam(BaseModel):
     source: Dict[str, Any]
 
 
-class ToolUseBlockParam(BaseModel):
-    type: Literal["tool_use"]
-    id: str
-    name: str
-    input: Dict[str, Any]
-
-
 class ToolResultBlockParam(BaseModel):
     type: Literal["tool_result"]
     tool_use_id: str
@@ -47,7 +40,6 @@ class Tool(BaseModel):
 ContentBlockParam = Union[
     TextBlockParam,
     ImageBlockParam,
-    ToolUseBlockParam,
     ToolResultBlockParam,
 ]
 
