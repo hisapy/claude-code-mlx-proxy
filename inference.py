@@ -52,7 +52,7 @@ class ChatParams(BaseModel):
     messages: list[Message]
     tools: Optional[list[ToolUse]] = None
     max_tokens: int
-    sampler: Optional[object] = None
+    sampler_params: Optional[dict] = None
     enable_thinking: bool = False
 
 
@@ -62,7 +62,7 @@ def parse_claude_message_params(params: ClaudeMessageParams) -> ChatParams:
         tools=_parse_tools(params),
         enable_thinking=_parse_thinking(params),
         max_tokens=params.max_tokens,
-        # sampler = make_sampler(params.temperature, params.top_p, params.top_k)
+        sampler_params=_parse_sampler(params),
     )
 
 
@@ -143,6 +143,23 @@ def _parse_thinking(params: ClaudeMessageParams):
         return True
 
 
+def _parse_sampler(params: ClaudeMessageParams):
+    temp = (
+        params.temperature
+        if params.temperature is not None
+        else settings.default_temperature
+    )
+    sampler_params = {"temp": temp}
+
+    if params.top_k is not None:
+        sampler_params["top_k"] = params.top_k
+
+    if params.top_p is not None:
+        sampler_params["top_p"] = params.top_p
+
+    return sampler_params
+
+
 def claude_chat(model, tokenizer, params: ChatParams):
     prompt = build_prompt(tokenizer, params)
 
@@ -150,7 +167,7 @@ def claude_chat(model, tokenizer, params: ChatParams):
         model,
         tokenizer,
         prompt=prompt,
-        sampler=params.sampler,
+        sampler=params.sampler_params,
         max_tokens=params.max_tokens,
         verbose=settings.verbose,
     )

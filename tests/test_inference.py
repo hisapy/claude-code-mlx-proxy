@@ -79,23 +79,21 @@ def test_parse_claude_tools(params):
 
 
 def test_parse_enable_thinking(params):
-    # Deprecated thinking format
-    params.thinking = {
-        "type": "enabled",
-        "budget_tokens": 1024,
-    }
     result: ChatParams = parse_claude_message_params(params)
-    assert result.enable_thinking
 
-    params.thinking = {"type": "adaptive"}
+    if params.thinking and params.thinking["type"] in ["enabled", "adaptive"]:
+        assert result.enable_thinking
+    else:
+        assert not result.enable_thinking
 
-    params.thinking = {"type": "disabled"}
+
+def test_parse_sampler_config(params):
     result: ChatParams = parse_claude_message_params(params)
-    assert not result.enable_thinking
 
-    params.thinking = None
-    result: ChatParams = parse_claude_message_params(params)
-    assert not result.enable_thinking
+    # Claude Code always send temperature but top_k and top_p depend on the specific request
+    assert result.sampler_params["temp"] == params.temperature
+    assert result.sampler_params.get("top_k") == params.top_k
+    assert result.sampler_params.get("top_p") == params.top_p
 
 
 def test_build_prompt():

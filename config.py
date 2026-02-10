@@ -19,7 +19,6 @@ class Settings(BaseSettings):
     # Generation settings
     default_max_tokens: int = 4096
     default_temperature: float = 1.0
-    default_top_p: float = 1.0
 
     # Verbosity
     verbose: bool = False
