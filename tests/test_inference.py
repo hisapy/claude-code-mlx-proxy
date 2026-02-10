@@ -54,9 +54,10 @@ def test_parse_claude_messages(params):
                     "url": c.source,
                 }
 
-            # elif c.type == "tool_result":
-            #     assert result.messages[i]["content"][j]["url"] == c.
-            #     expected_role = "tool"
+            elif c.type == "tool_result":
+                # NOTICE: the role expected by Transformers and that content must be always a string
+                assert isinstance(str, result.messages[i]["content"][j])
+                expected_role = "tool"
 
         assert result_messages[i]["role"] == expected_role
 

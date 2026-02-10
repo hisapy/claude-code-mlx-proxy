@@ -19,6 +19,7 @@ class ToolResultBlockParam(BaseModel):
     type: Literal["tool_result"]
     tool_use_id: str
     content: Union[str, TextBlockParam, ImageBlockParam]
+    # TODO: add support for other types of ToolResult content
 
 
 class SystemContent(BaseModel):

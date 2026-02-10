@@ -102,19 +102,33 @@ def _parse_conversation(claude_messages):
         for c in msg.content:
             if isinstance(c, TextBlockParam):
                 parsed_content.append({"type": "text", "text": c.text})
+
             elif isinstance(c, ImageBlockParam):
                 parsed_content.append({"type": "image", "url": c.source})
-            # elif isinstance(c, ToolResultBlockParam):
-            #     # When a tool_result is received, the role should be tool
-            #     # See https://huggingface.co/docs/transformers/en/chat_extras#tool-calling-example
-            #     parsed_content.append({"type": "tool_result", "content": c.content})
-            #     role = "tool"
+
+            elif isinstance(c, ToolResultBlockParam):
+                # When a tool_result is received, the role should be tool
+                # See https://huggingface.co/docs/transformers/en/chat_extras#tool-calling-example
+                role = "tool"
+
+                parsed_content.append(
+                    {"type": "tool_result", "content": _parse_tool_result(c.content)}
+                )
             else:
                 raise TypeError("Can't parse unknown content type in Claude message")
 
         messages.append({"role": role, "content": parsed_content})
 
     return messages
+
+
+def _parse_tool_result(content):
+    if isinstance(content, str):
+        return content
+    elif isinstance(content, TextBlockParam):
+        return content.text
+    elif isinstance(content, ImageBlockParam):
+        return content.source
 
 
 def _parse_tools(params: ClaudeMessageParams):
