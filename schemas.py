@@ -1,8 +1,9 @@
 from typing import Dict, Any, Optional, Union, Literal
 from pydantic import BaseModel
 
-
+##
 # Request models
+#
 
 
 class TextBlockParam(BaseModel):
@@ -77,12 +78,38 @@ class Usage(BaseModel):
     output_tokens: int
 
 
+##
 # Response models
+#
+
+
+class TextBlock(BaseModel):
+    type: Literal["text"]
+    text: str
+
+
+class ThinkingBlock(BaseModel):
+    type: Literal["thinking"]
+    thinking: str
+    signature: Optional[str] = None  # Do we need to provide Claude Code a signature?
+
+
+class ToolUseBlock(BaseModel):
+    type: Literal["tool_use"]
+    id: str
+    input: dict
+    name: str
+
+
+# TODO: support citations, and maybe thinking modes
+ContentBlock = Union[TextBlock, ThinkingBlock, ToolUseBlock]
+
+
 class ClaudeMessage(BaseModel):
     id: str
     type: str = "message"
     role: str = "assistant"
-    # content: list[ContentBlockText]
+    content: list[ContentBlock]
     model: str
     stop_reason: str = "end_turn"
     stop_sequence: Optional[str] = None
