@@ -91,10 +91,3 @@ class ClaudeMessage(BaseModel):
 
 class ClaudeTokenCount(BaseModel):
     input_tokens: int
-
-
-# class MessageStreamResponse(BaseModel):
-#     type: str
-#     index: Optional[int] = None
-#     delta: Optional[Dict[str, Any]] = None
-#     usage: Optional[Usage] = None

@@ -1,4 +1,4 @@
-from typing import Dict, TypedDict, Literal, Optional
+from typing import TypedDict, Literal, Optional
 from pydantic import BaseModel
 
 import logging
@@ -6,13 +6,21 @@ import logging
 from mlx_lm import load, generate, stream_generate
 from mlx_lm.sample_utils import make_sampler
 
+from config import settings
 from schemas import (
     ClaudeMessageParams,
     TextBlockParam,
     ImageBlockParam,
     ToolResultBlockParam,
 )
-from config import settings
+from server_sent_events import (
+    MessageStartEvent,
+    ContentBlockStartEvent,
+    ContentBlockDeltaEvent,
+    ContentBlockStopEvent,
+    MessageDeltaEvent,
+    MessageStopEvent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -174,42 +182,43 @@ def _parse_sampler(params: ClaudeMessageParams):
     return sampler_params
 
 
-def claude_chat(model, tokenizer, params: ChatParams):
-    prompt = build_prompt(tokenizer, params)
+def claude_chat(model, tokenizer, chat: ChatParams):
+    prompt = build_prompt(tokenizer, chat)
 
     return generate(
         model,
         tokenizer,
         prompt=prompt,
-        sampler=params.sampler_params,
-        max_tokens=params.max_tokens,
+        sampler=make_sampler(**chat.sampler_params),
+        max_tokens=chat.max_tokens,
         verbose=settings.verbose,
     )
 
 
-def claude_chat_stream(model, tokenizer, params: ChatParams):
-    chat = parse_claude_message_params(params)
+def claude_chat_stream(model, tokenizer, chat: ChatParams):
     prompt = build_prompt(chat)
+    id = "msg_" + str(abs(hash(prompt)))[:8]
+    # TODO: remove hardcoded usage
+    usage = {"input_tokens": 25, "output_tokens": 1}
 
-    # yield MessageStartEvent()
-    # yield ContentBlockStartEvent()
+    yield MessageStartEvent(id, chat.request_model, usage).emit()
+    yield ContentBlockStartEvent().emit()
 
     for response in stream_generate(
         model,
         tokenizer,
         prompt=prompt,
-        sampler=chat.sampler,
+        sampler=make_sampler(**chat.sampler_params),
         max_tokens=chat.max_tokens,
         verbose=settings.verbose,
     ):
         # Include params.model in the reponse
-        # yield ContentBlockDeltaEvent(response.text)
-        print(response.text)
-        yield response.text
+        # TODO: use index and input_json_delta
+        yield ContentBlockDeltaEvent("text_detla", response.text).emit()
 
-    # yield ContentBlockStopEvent()
-    # yield MessageDeltaEvent()
-    # yield MessageStopEvent()
+    yield ContentBlockStopEvent().emit()
+    yield MessageDeltaEvent().emit()
+    yield MessageStopEvent().emit()
 
 
 def build_prompt(tokenizer, chat: ChatParams):
