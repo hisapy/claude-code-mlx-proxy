@@ -7,7 +7,14 @@ from mlx_lm.sample_utils import make_sampler
 
 from config import settings
 from base_chat_parser import BaseChatParser
-from claude_schemas import ClaudeMessage, TextBlock, Usage
+from claude_schemas import (
+    ClaudeMessage,
+    ClaudeMessageParams,
+    ClaudeTokenCount,
+    ClaudeTokenCountParams,
+    TextBlock,
+    Usage,
+)
 from mlx_schemas import ChatParams
 from server_sent_events import (
     MessageStartEvent,
@@ -137,3 +144,30 @@ def build_prompt(tokenizer, chat: ChatParams):
         add_generation_prompt=True,  # TODO: what happens with a "PREFILL response" in the request?
         tokenize=True,  # True because not adding special tokens
     )
+
+
+def claude_tokens_count(tokenizer, params: ClaudeTokenCountParams) -> ClaudeTokenCount:
+    """Count tokens for a set of messages using the tokenizer.
+
+    Builds a ClaudeMessageParams-compatible object from the token count params
+    so the parser can process it, then tokenizes to count the tokens.
+    """
+    # Build a ClaudeMessageParams with defaults for the fields not in ClaudeTokenCountParams
+    message_params = ClaudeMessageParams(
+        max_tokens=0,
+        messages=params.messages,
+        model=params.model,
+        system=params.system,
+        tools=params.tools,
+        thinking=params.thinking,
+        tool_choice=params.tool_choice,
+    )
+    chat = claude_parser.parse_chat_params(message_params)
+    tokens = tokenizer.apply_chat_template(
+        chat.messages,
+        tools=chat.tools,
+        enable_thinking=chat.enable_thinking,
+        add_generation_prompt=True,
+        tokenize=True,
+    )
+    return ClaudeTokenCount(input_tokens=len(tokens))
