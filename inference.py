@@ -2,12 +2,12 @@ import uuid
 import logging
 import importlib
 
-from mlx_lm import load, generate, stream_generate
+from mlx_lm import load, stream_generate
 from mlx_lm.sample_utils import make_sampler
 
 from config import settings
 from base_chat_parser import BaseChatParser
-from claude_schemas import ClaudeMessage
+from claude_schemas import ClaudeMessage, TextBlock, Usage
 from mlx_schemas import ChatParams
 from server_sent_events import (
     MessageStartEvent,
@@ -35,6 +35,15 @@ def load_llm(model_name: str, trust_remote_code: bool):
     return model, tokenizer
 
 
+def _finish_reason_to_stop_reason(finish_reason: str | None) -> str:
+    """Map MLX finish_reason to Claude stop_reason."""
+    if finish_reason == "stop":
+        return "end_turn"
+    elif finish_reason == "length":
+        return "max_tokens"
+    return "end_turn"
+
+
 async def claude_chat(model, tokenizer, chat: ChatParams):
     prompt = build_prompt(tokenizer, chat)
 
@@ -44,20 +53,32 @@ async def claude_chat(model, tokenizer, chat: ChatParams):
     logger.debug(f"last message: {chat.messages[-1]}")
     logger.debug(f"max_tokens: {chat.max_tokens}")
 
-    response: str = generate(
+    text = ""
+    response = None
+    for response in stream_generate(
         model,
         tokenizer,
         prompt=prompt,
         sampler=make_sampler(**chat.sampler_params),
         max_tokens=chat.max_tokens,
-        verbose=settings.verbose,
+    ):
+        text += response.text
+
+    prompt_tokens = response.prompt_tokens if response else len(prompt)
+    generation_tokens = response.generation_tokens if response else 0
+    stop_reason = _finish_reason_to_stop_reason(
+        response.finish_reason if response else None
     )
 
     return ClaudeMessage(
         id=generate_response_id(),
-        content=[{"type": "text", "text": response}],
+        content=[TextBlock(type="text", text=text)],
         model=chat.request_model,
-        usage={"input_tokens": 100, "output_tokens": 200},
+        stop_reason=stop_reason,
+        usage=Usage(
+            input_tokens=prompt_tokens,
+            output_tokens=generation_tokens,
+        ),
     )
 
 
@@ -65,10 +86,10 @@ async def claude_chat_stream(model, tokenizer, chat: ChatParams):
     prompt = build_prompt(tokenizer, chat)
     id = generate_response_id()
 
-    # TODO: remove hardcoded usage
-    usage = {"input_tokens": 100, "output_tokens": 200}
+    # Initial usage with prompt tokens (will be updated at the end)
+    initial_usage = {"input_tokens": 0, "output_tokens": 0}
 
-    yield MessageStartEvent(id, chat.request_model, usage).emit()
+    yield MessageStartEvent(id, chat.request_model, initial_usage).emit()
     yield ContentBlockStartEvent().emit()
 
     logger.debug("--- claude_chat_stream called ---")
@@ -77,6 +98,7 @@ async def claude_chat_stream(model, tokenizer, chat: ChatParams):
     logger.debug(f"last message: {chat.messages[-1]}")
     logger.debug(f"max_tokens: {chat.max_tokens}")
 
+    response = None
     for response in stream_generate(
         model,
         tokenizer,
@@ -86,8 +108,18 @@ async def claude_chat_stream(model, tokenizer, chat: ChatParams):
     ):
         yield ContentBlockDeltaEvent("text_delta", response.text).emit()
 
+    prompt_tokens = response.prompt_tokens if response else len(prompt)
+    generation_tokens = response.generation_tokens if response else 0
+    stop_reason = _finish_reason_to_stop_reason(
+        response.finish_reason if response else None
+    )
+    final_usage = {
+        "input_tokens": prompt_tokens,
+        "output_tokens": generation_tokens,
+    }
+
     yield ContentBlockStopEvent().emit()
-    yield MessageDeltaEvent("end_turn", usage=usage).emit()
+    yield MessageDeltaEvent(stop_reason, usage=final_usage).emit()
     yield MessageStopEvent().emit()
 
 
