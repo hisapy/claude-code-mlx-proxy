@@ -11,15 +11,21 @@ from claude_schemas import (
 
 from mlx_schemas import ChatParams
 
+# Qwen3 recommended sampler defaults
+# See: https://huggingface.co/Qwen/Qwen3-14B
+QWEN3_THINKING_SAMPLER = {"temp": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0}
+QWEN3_NON_THINKING_SAMPLER = {"temp": 0.7, "top_p": 0.8, "top_k": 20, "min_p": 0.0}
+
 
 class Parser(BaseChatParser):
     def parse_chat_params(self, params: ClaudeMessageParams) -> ChatParams:
+        enable_thinking = _parse_thinking(params)
         return ChatParams(
             messages=_parse_messages(params),
             tools=_parse_tools(params),
-            enable_thinking=_parse_thinking(params),
+            enable_thinking=enable_thinking,
             max_tokens=params.max_tokens,
-            # sampler_params=_parse_sampler(params),
+            sampler_params=_parse_sampler(params, enable_thinking),
             request_model=params.model,
         )
 
@@ -115,19 +121,19 @@ def _parse_thinking(params: ClaudeMessageParams):
         return True
 
 
-# TODO:
-# def _parse_sampler(params: ClaudeMessageParams):
-#     temp = (
-#         params.temperature
-#         if params.temperature is not None
-#         else settings.default_temperature
-#     )
-#     sampler_params = {"temp": temp}
+def _parse_sampler(params: ClaudeMessageParams, enable_thinking: bool):
+    defaults = QWEN3_THINKING_SAMPLER if enable_thinking else QWEN3_NON_THINKING_SAMPLER
 
-#     if params.top_k is not None:
-#         sampler_params["top_k"] = params.top_k
+    sampler_params = {**defaults}
 
-#     if params.top_p is not None:
-#         sampler_params["top_p"] = params.top_p
+    # NOTE: We intentionally do NOT override temperature from the request.
+    # Claude Code always sends a temperature value (default 1.0) which would
+    # break Qwen3's recommended defaults (0.6 thinking / 0.7 non-thinking).
 
-#     return sampler_params
+    if params.top_k is not None:
+        sampler_params["top_k"] = params.top_k
+
+    if params.top_p is not None:
+        sampler_params["top_p"] = params.top_p
+
+    return sampler_params

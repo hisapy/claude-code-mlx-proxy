@@ -105,14 +105,31 @@ def test_parse_enable_thinking(params):
         assert not result.enable_thinking
 
 
-# def test_parse_sampler_config(params):
-#     result: ChatParams = parser.parse_chat_params(params)
+def test_parse_sampler_config(params):
+    from adapters.qwen3 import QWEN3_THINKING_SAMPLER, QWEN3_NON_THINKING_SAMPLER
 
-#     # Claude Code always send temperature but top_k and top_p depend on the specific request
-#     assert result.sampler_params["temp"] == params.temperature
-#     assert result.sampler_params.get("top_k") == params.top_k
-#     assert result.sampler_params.get("top_p") == params.top_p
+    result: ChatParams = parser.parse_chat_params(params)
+
+    defaults = (
+        QWEN3_THINKING_SAMPLER if result.enable_thinking else QWEN3_NON_THINKING_SAMPLER
+    )
+
+    # Temperature: always Qwen3 default (Claude Code always sends temperature,
+    # which would break Qwen3's recommended config)
+    assert result.sampler_params["temp"] == defaults["temp"]
+
+    # top_k: use request value if provided, otherwise Qwen3 default
+    expected_top_k = params.top_k if params.top_k is not None else defaults["top_k"]
+    assert result.sampler_params["top_k"] == expected_top_k
+
+    # top_p: use request value if provided, otherwise Qwen3 default
+    expected_top_p = params.top_p if params.top_p is not None else defaults["top_p"]
+    assert result.sampler_params["top_p"] == expected_top_p
+
+    # min_p: always Qwen3 default
+    assert result.sampler_params["min_p"] == defaults["min_p"]
 
 
+# TODO:
 # def test_build_prompt():
 #     pass
