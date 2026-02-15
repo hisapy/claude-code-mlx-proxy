@@ -1,24 +1,25 @@
-import time
 import logging
 import uvicorn
 
-from fastapi import FastAPI, HTTPException, Request, Depends
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import StreamingResponse
 from contextlib import asynccontextmanager
 
 from config import settings
-from schemas import (
+from claude_schemas import (
     ClaudeMessageParams,
     ClaudeTokenCountParams,
     ClaudeMessage,
     ClaudeTokenCount,
 )
+
+
 from inference import (
+    claude_parser,
+    load_llm,
     claude_chat,
     claude_chat_stream,
-    claude_tokens_count,
-    load_llm,
-    parse_claude_message_params,
+    # claude_tokens_count,
 )
 
 
@@ -55,6 +56,7 @@ from inference import (
 # Calculate max_tokens properly, substracting tokens from thinking
 # Rename models for similarity with Claude API docs
 # Support sampler (temperature, top_p, top_k)
+# Use chat template from config (NOTICE that not all chat templates support list content or tools, e.g., chat_template.jinja from qwen3)
 
 
 # TODO with Claude Code:
@@ -87,22 +89,10 @@ async def verify_model_loaded():
 app = FastAPI(lifespan=lifespan, dependencies=[Depends(verify_model_loaded)])
 
 
-@app.middleware("http")
-async def log_request_time(request: Request, call_next):
-    logger.debug(request.keys())
-    start_time = time.time()
-    response = await call_next(request)
-    process_time = time.time() - start_time
-    logger.info(
-        f"Request: {request.method} {request.url.path}, Status: {response.status_code}, Time: {process_time:.4f}s"
-    )
-    return response
-
-
 # TODO: document streaming response
 @app.post("/v1/messages")
 async def create_message(params: ClaudeMessageParams) -> ClaudeMessage:
-    chat = parse_claude_message_params(params)
+    chat = claude_parser.parse_chat_params(params)
 
     if params.stream:
         return StreamingResponse(
@@ -110,12 +100,15 @@ async def create_message(params: ClaudeMessageParams) -> ClaudeMessage:
             media_type="text/event-stream",
         )
     else:
-        return claude_chat(model, tokenizer, chat)
+        return await claude_chat(model, tokenizer, chat)
 
 
 @app.post("/v1/messages/count_tokens")
 async def count_tokens(params: ClaudeTokenCountParams) -> ClaudeTokenCount:
-    return claude_tokens_count(params)
+    logger.debug("*** count_tokens called ***")
+    logger.debug(f"last message: {params.messages[-1]}")
+    # return claude_tokens_count(params)
+    return ClaudeTokenCount(input_tokens=100)
 
 
 @app.get("/health")

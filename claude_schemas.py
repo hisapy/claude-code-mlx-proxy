@@ -23,11 +23,6 @@ class ToolResultBlockParam(BaseModel):
     # TODO: add support for other types of ToolResult content
 
 
-class SystemContent(BaseModel):
-    type: Literal["text"] = "text"
-    text: str
-
-
 class Tool(BaseModel):
     name: str
     description: Optional[str] = None
@@ -53,7 +48,7 @@ class ClaudeMessageParams(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     stop_sequences: Optional[list[str]] = None
     stream: Optional[bool] = False
-    system: Optional[Union[str, list[SystemContent]]] = None
+    system: Optional[Union[str, list[TextBlockParam]]] = None
     temperature: Optional[float] = 1.0
     thinking: Optional[dict] = None
     tool_choice: Optional[Dict[str, Any]] = None
@@ -66,7 +61,7 @@ class ClaudeMessageParams(BaseModel):
 class ClaudeTokenCountParams(BaseModel):
     model: str
     messages: list[Message]
-    system: Optional[Union[str, list[SystemContent]]] = None
+    system: Optional[Union[str, list[TextBlockParam]]] = None
     tools: Optional[list[Tool]] = None
     thinking: Optional[dict] = None
     tool_choice: Optional[Dict[str, Any]] = None

@@ -1,18 +1,14 @@
-from typing import TypedDict, Literal, Optional
-from pydantic import BaseModel
-
+import uuid
 import logging
+import importlib
 
 from mlx_lm import load, generate, stream_generate
 from mlx_lm.sample_utils import make_sampler
 
 from config import settings
-from schemas import (
-    ClaudeMessageParams,
-    TextBlockParam,
-    ImageBlockParam,
-    ToolResultBlockParam,
-)
+from base_chat_parser import BaseChatParser
+from claude_schemas import ClaudeMessage
+from mlx_schemas import ChatParams
 from server_sent_events import (
     MessageStartEvent,
     ContentBlockStartEvent,
@@ -22,7 +18,10 @@ from server_sent_events import (
     MessageStopEvent,
 )
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn.error")
+
+adapter = importlib.import_module(f"adapters.{settings.claude_mlx_adapter}")
+claude_parser: BaseChatParser = getattr(adapter, "Parser")
 
 
 def load_llm(model_name: str, trust_remote_code: bool):
@@ -36,156 +35,16 @@ def load_llm(model_name: str, trust_remote_code: bool):
     return model, tokenizer
 
 
-class ToolFunction(TypedDict):
-    name: str
-    description: str
-    parameters: dict
-
-
-class ToolUse(TypedDict):
-    type: Literal["function"]
-    function: ToolFunction
-
-
-class Message(TypedDict):
-    role: str
-    content: list[dict]
-
-
-class ChatParams(BaseModel):
-    """
-    Internal chat representation
-    """
-
-    messages: list[Message]
-    tools: Optional[list[ToolUse]] = None
-    max_tokens: int
-    sampler_params: Optional[dict] = None
-    enable_thinking: bool = False
-
-
-def parse_claude_message_params(params: ClaudeMessageParams) -> ChatParams:
-    return ChatParams(
-        messages=_parse_messages(params),
-        tools=_parse_tools(params),
-        enable_thinking=_parse_thinking(params),
-        max_tokens=params.max_tokens,
-        sampler_params=_parse_sampler(params),
-    )
-
-
-def _parse_messages(params: ClaudeMessageParams):
-    # Put system prompt at the beginning of the chat
-    # See https://huggingface.co/docs/transformers/en/chat_templating#using-applychattemplate
-    return [
-        *_parse_system_prompt(params.system),
-        *_parse_conversation(params.messages),
-    ]
-
-
-def _parse_system_prompt(claude_system_prompt):
-    messages = []
-    if isinstance(claude_system_prompt, str):
-        messages.append(
-            {
-                "role": "system",
-                "content": [{"type": "text", "text": claude_system_prompt}],
-            }
-        )
-    else:
-        for msg in claude_system_prompt:
-            messages.append(
-                {"role": "system", "content": [{"type": "text", "text": msg.text}]}
-            )
-
-    return messages
-
-
-def _parse_conversation(claude_messages):
-    messages = []
-    for msg in claude_messages:
-        parsed_content = []
-        role = msg.role
-
-        for c in msg.content:
-            if isinstance(c, TextBlockParam):
-                parsed_content.append({"type": "text", "text": c.text})
-
-            elif isinstance(c, ImageBlockParam):
-                parsed_content.append({"type": "image", "url": c.source})
-
-            elif isinstance(c, ToolResultBlockParam):
-                # When a tool_result is received, the role should be tool
-                # See https://huggingface.co/docs/transformers/en/chat_extras#tool-calling-example
-                role = "tool"
-
-                parsed_content.append(
-                    {"type": "tool_result", "content": _parse_tool_result(c.content)}
-                )
-            else:
-                raise TypeError("Can't parse unknown content type in Claude message")
-
-        messages.append({"role": role, "content": parsed_content})
-
-    return messages
-
-
-def _parse_tool_result(content):
-    if isinstance(content, str):
-        return content
-    elif isinstance(content, TextBlockParam):
-        return content.text
-    elif isinstance(content, ImageBlockParam):
-        return content.source
-
-
-def _parse_tools(params: ClaudeMessageParams):
-    if not params.tools:
-        return None
-    tools = []
-    for tool in params.tools:
-        tools.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.input_schema,
-                },
-            }
-        )
-    return tools
-
-
-def _parse_thinking(params: ClaudeMessageParams):
-    if not params.thinking or params.thinking.get("type") == "disabled":
-        return False
-
-    if params.thinking:
-        return True
-
-
-def _parse_sampler(params: ClaudeMessageParams):
-    temp = (
-        params.temperature
-        if params.temperature is not None
-        else settings.default_temperature
-    )
-    sampler_params = {"temp": temp}
-
-    if params.top_k is not None:
-        sampler_params["top_k"] = params.top_k
-
-    if params.top_p is not None:
-        sampler_params["top_p"] = params.top_p
-
-    return sampler_params
-
-
-def claude_chat(model, tokenizer, chat: ChatParams):
+async def claude_chat(model, tokenizer, chat: ChatParams):
     prompt = build_prompt(tokenizer, chat)
 
-    return generate(
+    logger.debug("*** claude_chat called ***")
+    logger.debug(f"enable_thinking: {chat.enable_thinking}")
+    logger.debug(f"messages length: {len(chat.messages)}")
+    logger.debug(f"last message: {chat.messages[-1]}")
+    logger.debug(f"max_tokens: {chat.max_tokens}")
+
+    response: str = generate(
         model,
         tokenizer,
         prompt=prompt,
@@ -194,15 +53,29 @@ def claude_chat(model, tokenizer, chat: ChatParams):
         verbose=settings.verbose,
     )
 
+    return ClaudeMessage(
+        id=generate_response_id(),
+        content=[{"type": "text", "text": response}],
+        model=chat.request_model,
+        usage={"input_tokens": 100, "output_tokens": 200},
+    )
 
-def claude_chat_stream(model, tokenizer, chat: ChatParams):
-    prompt = build_prompt(chat)
-    id = "msg_" + str(abs(hash(prompt)))[:8]
+
+async def claude_chat_stream(model, tokenizer, chat: ChatParams):
+    prompt = build_prompt(tokenizer, chat)
+    id = generate_response_id()
+
     # TODO: remove hardcoded usage
-    usage = {"input_tokens": 25, "output_tokens": 1}
+    usage = {"input_tokens": 100, "output_tokens": 200}
 
     yield MessageStartEvent(id, chat.request_model, usage).emit()
     yield ContentBlockStartEvent().emit()
+
+    logger.debug("--- claude_chat_stream called ---")
+    logger.debug(f"enable_thinking: {chat.enable_thinking}")
+    logger.debug(f"messages length: {len(chat.messages)}")
+    logger.debug(f"last message: {chat.messages[-1]}")
+    logger.debug(f"max_tokens: {chat.max_tokens}")
 
     for response in stream_generate(
         model,
@@ -210,18 +83,21 @@ def claude_chat_stream(model, tokenizer, chat: ChatParams):
         prompt=prompt,
         sampler=make_sampler(**chat.sampler_params),
         max_tokens=chat.max_tokens,
-        verbose=settings.verbose,
     ):
-        # Include params.model in the reponse
-        # TODO: use index and input_json_delta
-        yield ContentBlockDeltaEvent("text_detla", response.text).emit()
+        yield ContentBlockDeltaEvent("text_delta", response.text).emit()
 
     yield ContentBlockStopEvent().emit()
-    yield MessageDeltaEvent().emit()
+    yield MessageDeltaEvent("end_turn", usage=usage).emit()
     yield MessageStopEvent().emit()
 
 
+def generate_response_id(prefix="msg"):
+    return f"{prefix}_{uuid.uuid4().hex[:34]}"
+
+
 def build_prompt(tokenizer, chat: ChatParams):
+    logger.debug(chat.enable_thinking)
+    logger.debug(chat.max_tokens)
     return tokenizer.apply_chat_template(
         chat.messages,
         tools=chat.tools,
@@ -229,116 +105,3 @@ def build_prompt(tokenizer, chat: ChatParams):
         add_generation_prompt=True,  # TODO: what happens with a "PREFILL response" in the request?
         tokenize=True,  # True because not adding special tokens
     )
-
-
-def claude_tokens_count(text: str) -> int:
-    pass
-    # """Count tokens in text"""
-    # try:
-    #     # MLX tokenizers often expect the text to be handled through their specific methods
-    #     # First try the standard approach with proper string handling
-    #     if isinstance(text, str) and text.strip():
-    #         # For MLX, we may need to use a different approach
-    #         # Try to get tokens using the tokenizer's __call__ method or encode
-    #         try:
-    #             # Some MLX tokenizers work better with this approach
-    #             result = tokenizer(text, return_tensors=False, add_special_tokens=False)
-    #             if isinstance(result, dict) and "input_ids" in result:
-    #                 return len(result["input_ids"])
-    #             elif hasattr(result, "__len__"):
-    #                 return len(result)
-    #         except (AttributeError, TypeError, ValueError):
-    #             pass
-
-    #         # Try direct encode without parameters
-    #         try:
-    #             encoded = tokenizer.encode(text)
-    #             return (
-    #                 len(encoded) if hasattr(encoded, "__len__") else len(list(encoded))
-    #             )
-    #         except (AttributeError, TypeError, ValueError):
-    #             pass
-
-    #         # Try with explicit string conversion and basic parameters
-    #         try:
-    #             tokens = tokenizer.encode(str(text), add_special_tokens=False)
-    #             return len(tokens)
-    #         except (AttributeError, TypeError, ValueError):
-    #             pass
-
-    #     # Final fallback: character-based estimation
-    #     return max(1, len(str(text)) // 4)  # At least 1 token, ~4 chars per token
-
-    # except Exception as e:
-    #     print(f"Token counting failed with error: {e}")
-    #     return max(1, len(str(text)) // 4)  # Fallback estimation
-
-
-# async def stream_generate_response(
-#     request: MessagesRequest, prompt: str, input_tokens: int
-# ):
-#     """Generate streaming response"""
-#     response_id = "msg_" + str(abs(hash(prompt)))[:8]
-#     full_text = ""
-
-#     # Send message start event
-#     message_start = {
-#         "type": "message_start",
-#         "message": {
-#             "id": response_id,
-#             "type": "message",
-#             "role": "assistant",
-#             "content": [],
-#             "model": request.model,
-#             "stop_reason": None,
-#             "stop_sequence": None,
-#             "usage": {"input_tokens": input_tokens, "output_tokens": 0},
-#         },
-#     }
-#     yield f"event: message_start\ndata: {json.dumps(message_start)}\n\n"
-
-#     # Send content block start
-#     content_start = {
-#         "type": "content_block_start",
-#         "index": 0,
-#         "content_block": {"type": "text", "text": ""},
-#     }
-#     yield f"event: content_block_start\ndata: {json.dumps(content_start)}\n\n"
-
-#     # Stream generation
-#     for i, response in enumerate(
-#         stream_generate(
-#             model,
-#             tokenizer,
-#             prompt=prompt,
-#             max_tokens=request.max_tokens,
-#         )
-#     ):
-#         full_text += response.text
-
-#         # Send content block delta
-#         content_delta = {
-#             "type": "content_block_delta",
-#             "index": 0,
-#             "delta": {"type": "text_delta", "text": response.text},
-#         }
-#         yield f"event: content_block_delta\ndata: {json.dumps(content_delta)}\n\n"
-
-#     # Count output tokens
-#     output_tokens = count_tokens(full_text)
-
-#     # Send content block stop
-#     content_stop = {"type": "content_block_stop", "index": 0}
-#     yield f"event: content_block_stop\ndata: {json.dumps(content_stop)}\n\n"
-
-#     # Send message delta with usage
-#     message_delta = {
-#         "type": "message_delta",
-#         "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-#         "usage": {"output_tokens": output_tokens},
-#     }
-#     yield f"event: message_delta\ndata: {json.dumps(message_delta)}\n\n"
-
-#     # Send message stop
-#     message_stop = {"type": "message_stop"}
-#     yield f"event: message_stop\ndata: {json.dumps(message_stop)}\n\n"
