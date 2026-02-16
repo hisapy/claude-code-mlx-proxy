@@ -109,20 +109,28 @@ async def claude_chat_stream(model, tokenizer, chat: ChatParams):
     )
     id = generate_response_id()
 
-    # Initial usage with prompt tokens (will be updated at the end)
-    initial_usage = {"input_tokens": 0, "output_tokens": 0}
-
-    yield MessageStartEvent(id, chat.request_model, initial_usage).emit()
-    yield ContentBlockStartEvent().emit()
-
-    response = None
-    for response in stream_generate(
+    response_stream = stream_generate(
         model,
         tokenizer,
         prompt=prompt,
         sampler=make_sampler(**chat.sampler_params),
         max_tokens=chat.max_tokens,
-    ):
+    )
+
+    first_response = next(response_stream, None)
+    initial_usage = {
+        "input_tokens": _resolve_prompt_tokens(first_response, prompt),
+        "output_tokens": _resolve_generation_tokens(first_response),
+    }
+
+    yield MessageStartEvent(id, chat.request_model, initial_usage).emit()
+    yield ContentBlockStartEvent().emit()
+
+    response = first_response
+    if first_response and first_response.text:
+        yield ContentBlockDeltaEvent("text_delta", first_response.text).emit()
+
+    for response in response_stream:
         yield ContentBlockDeltaEvent("text_delta", response.text).emit()
 
     prompt_tokens = _resolve_prompt_tokens(response, prompt)
