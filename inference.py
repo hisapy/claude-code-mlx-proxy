@@ -28,7 +28,7 @@ from server_sent_events import (
 logger = logging.getLogger("uvicorn.error")
 
 adapter = importlib.import_module(f"adapters.{settings.claude_mlx_adapter}")
-claude_parser: BaseChatParser = getattr(adapter, "Parser")
+claude_parser: BaseChatParser = adapter.Parser()
 
 
 def load_llm(model_name: str, trust_remote_code: bool):
@@ -44,6 +44,7 @@ def load_llm(model_name: str, trust_remote_code: bool):
 
 def _finish_reason_to_stop_reason(finish_reason: str | None) -> str:
     """Map MLX finish_reason to Claude stop_reason."""
+    logger.error(finish_reason)
     if finish_reason == "stop":
         return "end_turn"
     elif finish_reason == "length":
@@ -52,13 +53,12 @@ def _finish_reason_to_stop_reason(finish_reason: str | None) -> str:
 
 
 async def claude_chat(model, tokenizer, chat: ChatParams):
-    prompt = build_prompt(tokenizer, chat)
-
-    logger.debug("*** claude_chat called ***")
-    logger.debug(f"enable_thinking: {chat.enable_thinking}")
-    logger.debug(f"messages length: {len(chat.messages)}")
-    logger.debug(f"last message: {chat.messages[-1]}")
-    logger.debug(f"max_tokens: {chat.max_tokens}")
+    prompt = build_prompt(
+        tokenizer,
+        chat,
+        add_generation_prompt=chat.add_generation_prompt,
+        continue_final_message=chat.continue_final_message,
+    )
 
     text = ""
     response = None
@@ -90,7 +90,12 @@ async def claude_chat(model, tokenizer, chat: ChatParams):
 
 
 async def claude_chat_stream(model, tokenizer, chat: ChatParams):
-    prompt = build_prompt(tokenizer, chat)
+    prompt = build_prompt(
+        tokenizer,
+        chat,
+        add_generation_prompt=chat.add_generation_prompt,
+        continue_final_message=chat.continue_final_message,
+    )
     id = generate_response_id()
 
     # Initial usage with prompt tokens (will be updated at the end)
@@ -98,12 +103,6 @@ async def claude_chat_stream(model, tokenizer, chat: ChatParams):
 
     yield MessageStartEvent(id, chat.request_model, initial_usage).emit()
     yield ContentBlockStartEvent().emit()
-
-    logger.debug("--- claude_chat_stream called ---")
-    logger.debug(f"enable_thinking: {chat.enable_thinking}")
-    logger.debug(f"messages length: {len(chat.messages)}")
-    logger.debug(f"last message: {chat.messages[-1]}")
-    logger.debug(f"max_tokens: {chat.max_tokens}")
 
     response = None
     for response in stream_generate(
@@ -134,25 +133,23 @@ def generate_response_id(prefix="msg"):
     return f"{prefix}_{uuid.uuid4().hex[:34]}"
 
 
-def build_prompt(tokenizer, chat: ChatParams):
-    logger.debug(chat.enable_thinking)
-    logger.debug(chat.max_tokens)
+def build_prompt(
+    tokenizer,
+    chat: ChatParams,
+    add_generation_prompt: bool = True,
+    continue_final_message: bool = False,
+):
     return tokenizer.apply_chat_template(
         chat.messages,
         tools=chat.tools,
         enable_thinking=chat.enable_thinking,
-        add_generation_prompt=True,  # TODO: what happens with a "PREFILL response" in the request?
-        tokenize=True,  # True because not adding special tokens
+        add_generation_prompt=add_generation_prompt,
+        continue_final_message=continue_final_message,
+        tokenize=True,
     )
 
 
 def claude_tokens_count(tokenizer, params: ClaudeTokenCountParams) -> ClaudeTokenCount:
-    """Count tokens for a set of messages using the tokenizer.
-
-    Builds a ClaudeMessageParams-compatible object from the token count params
-    so the parser can process it, then tokenizes to count the tokens.
-    """
-    # Build a ClaudeMessageParams with defaults for the fields not in ClaudeTokenCountParams
     message_params = ClaudeMessageParams(
         max_tokens=0,
         messages=params.messages,
@@ -163,11 +160,11 @@ def claude_tokens_count(tokenizer, params: ClaudeTokenCountParams) -> ClaudeToke
         tool_choice=params.tool_choice,
     )
     chat = claude_parser.parse_chat_params(message_params)
-    tokens = tokenizer.apply_chat_template(
-        chat.messages,
-        tools=chat.tools,
-        enable_thinking=chat.enable_thinking,
-        add_generation_prompt=True,
-        tokenize=True,
+    # Override to not add generation prompt for token counting
+    tokens = build_prompt(
+        tokenizer,
+        chat,
+        add_generation_prompt=False,
+        continue_final_message=False,
     )
     return ClaudeTokenCount(input_tokens=len(tokens))

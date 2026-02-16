@@ -63,8 +63,6 @@ async def create_message(params: ClaudeMessageParams) -> ClaudeMessage:
 
 @app.post("/v1/messages/count_tokens")
 async def count_tokens(params: ClaudeTokenCountParams) -> ClaudeTokenCount:
-    logger.debug("*** count_tokens called ***")
-    logger.debug(f"last message: {params.messages[-1]}")
     return claude_tokens_count(tokenizer, params)
 
 

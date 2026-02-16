@@ -53,6 +53,7 @@ class ClaudeMessageParams(BaseModel):
     thinking: Optional[dict] = None
     tool_choice: Optional[Dict[str, Any]] = None
     tools: Optional[list[Tool]] = None
+    response_format: Optional[Dict[str, Any]] = None
     top_p: Optional[float] = None
     top_k: Optional[int] = None
     original_model: Optional[str] = None

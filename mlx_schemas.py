@@ -7,7 +7,7 @@ Parsers (e.g., qwen3_parser) can subclass ChatParams and override its properties
 """
 
 from typing import TypedDict, Literal, Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 
 
 class ToolFunction(TypedDict):
@@ -37,3 +37,16 @@ class ChatParams(BaseModel):
     sampler_params: Optional[dict] = None
     enable_thinking: bool = False
     request_model: str
+    structured_output_requested: bool = False
+    add_generation_prompt: bool = True
+    continue_final_message: bool = False
+
+    @model_validator(mode="after")
+    def validate_generation_params(self):
+        if self.add_generation_prompt and self.continue_final_message:
+            raise ValueError(
+                "Cannot use both add_generation_prompt and continue_final_message. "
+                "add_generation_prompt is for generating new assistant responses, "
+                "while continue_final_message is for prefilling/continuing existing responses."
+            )
+        return self

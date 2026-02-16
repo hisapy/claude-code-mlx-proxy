@@ -130,6 +130,75 @@ def test_parse_sampler_config(params):
     assert result.sampler_params["min_p"] == defaults["min_p"]
 
 
+def test_prefill_sets_continue_final_message_true():
+    params = ClaudeMessageParams(
+        max_tokens=256,
+        model="test-model",
+        system=[{"type": "text", "text": "You are helpful."}],
+        messages=[
+            {"role": "user", "content": [{"type": "text", "text": "Say hi"}]},
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Hello"}],
+            },
+        ],
+    )
+
+    result: ChatParams = parser.parse_chat_params(params)
+    assert result.add_generation_prompt is False
+    assert result.continue_final_message is True
+
+
+def test_structured_output_disables_continue_final_message():
+    params = ClaudeMessageParams(
+        max_tokens=256,
+        model="test-model",
+        system=[{"type": "text", "text": "Return strict JSON"}],
+        messages=[
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Return user profile JSON"}],
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "{"}],
+            },
+        ],
+        response_format={
+            "type": "json_schema",
+            "json_schema": {"name": "UserProfile", "schema": {"type": "object"}},
+        },
+    )
+
+    result: ChatParams = parser.parse_chat_params(params)
+    assert result.structured_output_requested is True
+    assert result.add_generation_prompt is True
+    assert result.continue_final_message is False
+
+
+def test_system_instruction_can_enable_continue_final_message():
+    params = ClaudeMessageParams(
+        max_tokens=256,
+        model="test-model",
+        system=[
+            {
+                "type": "text",
+                "text": "Use continue_final_message behavior and continue the final message.",
+            }
+        ],
+        messages=[
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "Generate output"}],
+            }
+        ],
+    )
+
+    result: ChatParams = parser.parse_chat_params(params)
+    assert result.add_generation_prompt is False
+    assert result.continue_final_message is True
+
+
 # TODO:
 # def test_build_prompt():
 #     pass
