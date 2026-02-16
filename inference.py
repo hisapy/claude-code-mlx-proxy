@@ -1,6 +1,7 @@
 import uuid
 import logging
 import importlib
+import time
 
 from mlx_lm import load, stream_generate
 from mlx_lm.sample_utils import make_sampler
@@ -65,7 +66,56 @@ def _resolve_stop_reason(last_response):
     return _finish_reason_to_stop_reason(finish_reason)
 
 
+def _format_dialog(chat: ChatParams) -> str:
+    lines = []
+    for message in chat.messages:
+        role = message.get("role", "unknown")
+        content = str(message.get("content", ""))
+        lines.append(f"[{role}] {content}")
+    return "\n".join(lines)
+
+
+def _log_incoming_dialog(chat: ChatParams):
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+    logger.debug(
+        "Incoming conversation\n%s",
+        _format_dialog(chat),
+    )
+
+
+def _log_generation_summary(
+    *,
+    generated_text: str,
+    last_response,
+    elapsed_seconds: float,
+    is_streaming: bool,
+):
+    if not logger.isEnabledFor(logging.DEBUG):
+        return
+
+    generation_tokens = _resolve_generation_tokens(last_response)
+    measured_tps = generation_tokens / elapsed_seconds if elapsed_seconds > 0 else 0.0
+
+    logger.debug(
+        "Generation summary (%s) elapsed=%.3fs prompt_tokens=%s generation_tokens=%s "
+        "finish_reason=%s prompt_tps=%s generation_tps=%s measured_tps=%.2f peak_memory_gb=%s",
+        "stream" if is_streaming else "non-stream",
+        elapsed_seconds,
+        getattr(last_response, "prompt_tokens", None),
+        getattr(last_response, "generation_tokens", None),
+        getattr(last_response, "finish_reason", None),
+        getattr(last_response, "prompt_tps", None),
+        getattr(last_response, "generation_tps", None),
+        measured_tps,
+        getattr(last_response, "peak_memory", None),
+    )
+    logger.debug("Generated response\n[assistant] %s", generated_text)
+
+
 async def claude_chat(model, tokenizer, chat: ChatParams):
+    _log_incoming_dialog(chat)
+
     prompt = build_prompt(
         tokenizer,
         chat,
@@ -73,6 +123,7 @@ async def claude_chat(model, tokenizer, chat: ChatParams):
         continue_final_message=chat.continue_final_message,
     )
 
+    start_time = time.perf_counter()
     text = ""
     response = None
     for response in stream_generate(
@@ -88,6 +139,13 @@ async def claude_chat(model, tokenizer, chat: ChatParams):
     generation_tokens = _resolve_generation_tokens(response)
     stop_reason = _resolve_stop_reason(response)
 
+    _log_generation_summary(
+        generated_text=text,
+        last_response=response,
+        elapsed_seconds=time.perf_counter() - start_time,
+        is_streaming=False,
+    )
+
     return ClaudeMessage(
         id=generate_response_id(),
         content=[TextBlock(type="text", text=text)],
@@ -101,6 +159,8 @@ async def claude_chat(model, tokenizer, chat: ChatParams):
 
 
 async def claude_chat_stream(model, tokenizer, chat: ChatParams):
+    _log_incoming_dialog(chat)
+
     prompt = build_prompt(
         tokenizer,
         chat,
@@ -108,6 +168,8 @@ async def claude_chat_stream(model, tokenizer, chat: ChatParams):
         continue_final_message=chat.continue_final_message,
     )
     id = generate_response_id()
+    start_time = time.perf_counter()
+    generated_text = ""
 
     response_stream = stream_generate(
         model,
@@ -128,9 +190,15 @@ async def claude_chat_stream(model, tokenizer, chat: ChatParams):
 
     response = first_response
     if first_response and first_response.text:
+        generated_text += first_response.text
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("[assistantΔ] %s", first_response.text)
         yield ContentBlockDeltaEvent("text_delta", first_response.text).emit()
 
     for response in response_stream:
+        generated_text += response.text
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("[assistantΔ] %s", response.text)
         yield ContentBlockDeltaEvent("text_delta", response.text).emit()
 
     prompt_tokens = _resolve_prompt_tokens(response, prompt)
@@ -144,6 +212,13 @@ async def claude_chat_stream(model, tokenizer, chat: ChatParams):
     yield ContentBlockStopEvent().emit()
     yield MessageDeltaEvent(stop_reason, usage=final_usage).emit()
     yield MessageStopEvent().emit()
+
+    _log_generation_summary(
+        generated_text=generated_text,
+        last_response=response,
+        elapsed_seconds=time.perf_counter() - start_time,
+        is_streaming=True,
+    )
 
 
 def generate_response_id(prefix="msg"):
