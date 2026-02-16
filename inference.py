@@ -52,6 +52,19 @@ def _finish_reason_to_stop_reason(finish_reason: str | None) -> str:
     return "end_turn"
 
 
+def _resolve_prompt_tokens(last_response, prompt):
+    return last_response.prompt_tokens if last_response else len(prompt)
+
+
+def _resolve_generation_tokens(last_response):
+    return last_response.generation_tokens if last_response else 0
+
+
+def _resolve_stop_reason(last_response):
+    finish_reason = last_response.finish_reason if last_response else None
+    return _finish_reason_to_stop_reason(finish_reason)
+
+
 async def claude_chat(model, tokenizer, chat: ChatParams):
     prompt = build_prompt(
         tokenizer,
@@ -71,11 +84,9 @@ async def claude_chat(model, tokenizer, chat: ChatParams):
     ):
         text += response.text
 
-    prompt_tokens = response.prompt_tokens if response else len(prompt)
-    generation_tokens = response.generation_tokens if response else 0
-    stop_reason = _finish_reason_to_stop_reason(
-        response.finish_reason if response else None
-    )
+    prompt_tokens = _resolve_prompt_tokens(response, prompt)
+    generation_tokens = _resolve_generation_tokens(response)
+    stop_reason = _resolve_stop_reason(response)
 
     return ClaudeMessage(
         id=generate_response_id(),
@@ -114,11 +125,9 @@ async def claude_chat_stream(model, tokenizer, chat: ChatParams):
     ):
         yield ContentBlockDeltaEvent("text_delta", response.text).emit()
 
-    prompt_tokens = response.prompt_tokens if response else len(prompt)
-    generation_tokens = response.generation_tokens if response else 0
-    stop_reason = _finish_reason_to_stop_reason(
-        response.finish_reason if response else None
-    )
+    prompt_tokens = _resolve_prompt_tokens(response, prompt)
+    generation_tokens = _resolve_generation_tokens(response)
+    stop_reason = _resolve_stop_reason(response)
     final_usage = {
         "input_tokens": prompt_tokens,
         "output_tokens": generation_tokens,
