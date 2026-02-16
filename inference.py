@@ -170,6 +170,9 @@ async def claude_chat_stream(model, tokenizer, chat: ChatParams):
     id = generate_response_id()
     start_time = time.perf_counter()
     generated_text = ""
+    delta_type = (
+        "input_json_delta" if chat.structured_output_requested else "text_delta"
+    )
 
     response_stream = stream_generate(
         model,
@@ -192,14 +195,14 @@ async def claude_chat_stream(model, tokenizer, chat: ChatParams):
     if first_response and first_response.text:
         generated_text += first_response.text
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("[assistantΔ] %s", first_response.text)
-        yield ContentBlockDeltaEvent("text_delta", first_response.text).emit()
+            logger.debug("[assistantΔ:%s] %s", delta_type, first_response.text)
+        yield ContentBlockDeltaEvent(delta_type, first_response.text).emit()
 
     for response in response_stream:
         generated_text += response.text
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug("[assistantΔ] %s", response.text)
-        yield ContentBlockDeltaEvent("text_delta", response.text).emit()
+            logger.debug("[assistantΔ:%s] %s", delta_type, response.text)
+        yield ContentBlockDeltaEvent(delta_type, response.text).emit()
 
     prompt_tokens = _resolve_prompt_tokens(response, prompt)
     generation_tokens = _resolve_generation_tokens(response)
