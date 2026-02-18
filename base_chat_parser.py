@@ -38,15 +38,11 @@ class BaseChatParser(ABC):
         """
         pass
 
-    @abstractmethod
-    def parse_response_text(self, text: str) -> ContentBlock:
+    def sanitize_response_text(self, text: str) -> str:
         """
         Cleans the model's output (stripping Markdown, thinking tags, etc.)
         and wraps it back into a Claude-compatible JSON response.
         """
-        pass
-
-    def sanitize_response_text(self, text: str) -> str:
         return text
 
     def create_stream_text_sanitizer(self) -> StreamTextSanitizer:

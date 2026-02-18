@@ -1,12 +1,9 @@
 import re
-from typing import Any, Dict
 
 from base_chat_parser import BaseChatParser, StreamTextSanitizer
 from claude_schemas import (
     # Request models
     ClaudeMessageParams,
-    ContentBlock,
-    TextBlock,
     TextBlockParam,
     ImageBlockParam,
     ToolResultBlockParam,
@@ -46,10 +43,6 @@ class Parser(BaseChatParser):
             add_generation_prompt=add_generation_prompt,
             continue_final_message=continue_final_message,
         )
-
-    def parse_response_text(self, text: str) -> ContentBlock:
-        # TODO: handle other types of content block
-        return TextBlock(text=self.sanitize_response_text(text))
 
     def sanitize_response_text(self, text: str) -> str:
         return _sanitize_qwen3_text(text).strip()

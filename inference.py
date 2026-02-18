@@ -15,6 +15,7 @@ from claude_schemas import (
     ClaudeMessageParams,
     ClaudeTokenCount,
     ClaudeTokenCountParams,
+    TextBlock,
     Usage,
 )
 from mlx_schemas import ChatParams
@@ -96,9 +97,10 @@ async def claude_chat(model, tokenizer, chat_params: ClaudeMessageParams):
 
         logger.debug(f"Full generated text:\n{generated_text}")
 
+        # TODO: handle other types of content block
         return ClaudeMessage(
             id=generate_response_id(),
-            content=[claude_parser.parse_response_text(generated_text)],
+            content=[TextBlock(text=generated_text)],
             model=chat.request_model,
             stop_reason=_resolve_stop_reason(response, matched_stop_sequence),
             stop_sequence=matched_stop_sequence,
@@ -194,13 +196,59 @@ async def claude_chat_stream(model, tokenizer, chat_params: ClaudeMessageParams)
     logger.debug(f"### Stream completed ###")
 
 
+def claude_tokens_count(tokenizer, params: ClaudeTokenCountParams) -> ClaudeTokenCount:
+    message_params = ClaudeMessageParams(
+        max_tokens=0,
+        messages=params.messages,
+        model=params.model,
+        system=params.system,
+        tools=params.tools,
+        thinking=params.thinking,
+        tool_choice=params.tool_choice,
+    )
+    chat = claude_parser.parse_chat_params(message_params)
+
+    # Override to not add generation prompt for token counting
+    chat.add_generation_prompt = False
+    chat.continue_final_message = False
+
+    tokens = build_prompt(tokenizer, chat, tokenize=True)
+
+    return ClaudeTokenCount(input_tokens=len(tokens))
+
+
+def build_prompt(tokenizer, chat: ChatParams, tokenize: bool = False):
+    prompt = _render_prompt(tokenizer, chat, tokenize=tokenize)
+
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("### chat:\n%s", chat.model_dump_json(indent=2))
+        if tokenize:
+            logger.debug(
+                "### prompt:\n%s", _render_prompt(tokenizer, chat, tokenize=False)
+            )
+        else:
+            logger.debug("### prompt:\n%s", prompt)
+
+    return prompt
+
+
+def _render_prompt(tokenizer, chat: ChatParams, tokenize: bool):
+    return tokenizer.apply_chat_template(
+        chat.messages,
+        tools=chat.tools,
+        enable_thinking=chat.enable_thinking,
+        add_generation_prompt=chat.add_generation_prompt,
+        continue_final_message=chat.continue_final_message,
+        tokenize=tokenize,
+    )
+
+
 def generate_response_id(prefix="msg"):
     return f"{prefix}_{uuid.uuid4().hex[:34]}"
 
 
 @contextmanager
 def inference_profiler():
-    # TODO: maybe add other stats like CPU/GPU usage, memory usage, etc.
     start_time = time.perf_counter()
     stats = {"last_response": None}
     try:
@@ -258,19 +306,13 @@ def _prepare_prompt_input(tokenizer, prompt_input):
     return trimmed_tokens, len(trimmed_tokens)
 
 
-def _stop_reason(response) -> str:
+def _resolve_stop_reason(response, matched_stop_sequence: str | None) -> str:
     """Map MLX finish_reason to Claude stop_reason."""
-    if response.finish_reason == "stop":
+    if matched_stop_sequence:
         return "end_turn"
     elif response.finish_reason == "length":
         return "max_tokens"
     return "end_turn"
-
-
-def _resolve_stop_reason(response, matched_stop_sequence: str | None) -> str:
-    if matched_stop_sequence:
-        return "end_turn"
-    return _stop_reason(response)
 
 
 def _resolve_stop_sequences(chat: ChatParams) -> list[str]:
@@ -321,30 +363,6 @@ def _resolve_max_tokens(requested: int) -> int:
     return max(1, requested)
 
 
-def _apply_stop_sequences(
-    text: str, stop_sequences: list[str]
-) -> tuple[str, str | None]:
-    if not text or not stop_sequences:
-        return text, None
-
-    earliest_index = None
-    matched_stop_sequence = None
-
-    for sequence in stop_sequences:
-        index = text.find(sequence)
-        if index == -1:
-            continue
-
-        if earliest_index is None or index < earliest_index:
-            earliest_index = index
-            matched_stop_sequence = sequence
-
-    if matched_stop_sequence is None:
-        return text, None
-
-    return text[:earliest_index], matched_stop_sequence
-
-
 class _TextStopper:
     def __init__(self, stop_sequences: list[str]):
         self.stop_sequences = [sequence for sequence in stop_sequences if sequence]
@@ -385,48 +403,25 @@ class _TextStopper:
         return tail
 
 
-def _render_prompt(tokenizer, chat: ChatParams, tokenize: bool):
-    return tokenizer.apply_chat_template(
-        chat.messages,
-        tools=chat.tools,
-        enable_thinking=chat.enable_thinking,
-        add_generation_prompt=chat.add_generation_prompt,
-        continue_final_message=chat.continue_final_message,
-        tokenize=tokenize,
-    )
+def _apply_stop_sequences(
+    text: str, stop_sequences: list[str]
+) -> tuple[str, str | None]:
+    if not text or not stop_sequences:
+        return text, None
 
+    earliest_index = None
+    matched_stop_sequence = None
 
-def build_prompt(tokenizer, chat: ChatParams, tokenize: bool = False):
-    prompt = _render_prompt(tokenizer, chat, tokenize=tokenize)
+    for sequence in stop_sequences:
+        index = text.find(sequence)
+        if index == -1:
+            continue
 
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug("### chat:\n%s", chat.model_dump_json(indent=2))
-        if tokenize:
-            logger.debug(
-                "### prompt:\n%s", _render_prompt(tokenizer, chat, tokenize=False)
-            )
-        else:
-            logger.debug("### prompt:\n%s", prompt)
+        if earliest_index is None or index < earliest_index:
+            earliest_index = index
+            matched_stop_sequence = sequence
 
-    return prompt
+    if matched_stop_sequence is None:
+        return text, None
 
-
-def claude_tokens_count(tokenizer, params: ClaudeTokenCountParams) -> ClaudeTokenCount:
-    message_params = ClaudeMessageParams(
-        max_tokens=0,
-        messages=params.messages,
-        model=params.model,
-        system=params.system,
-        tools=params.tools,
-        thinking=params.thinking,
-        tool_choice=params.tool_choice,
-    )
-    chat = claude_parser.parse_chat_params(message_params)
-
-    # Override to not add generation prompt for token counting
-    chat.add_generation_prompt = False
-    chat.continue_final_message = False
-
-    tokens = build_prompt(tokenizer, chat, tokenize=True)
-
-    return ClaudeTokenCount(input_tokens=len(tokens))
+    return text[:earliest_index], matched_stop_sequence
