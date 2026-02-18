@@ -1,5 +1,5 @@
 from typing import Dict, Any, Optional, Union, Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 ##
 # Request models
@@ -80,18 +80,18 @@ class Usage(BaseModel):
 
 
 class TextBlock(BaseModel):
-    type: Literal["text"]
+    type: Optional[Literal["text"]] = "text"
     text: str
 
 
 class ThinkingBlock(BaseModel):
-    type: Literal["thinking"]
+    type: Literal["text"] = Field(default="text", frozen=True)
     thinking: str
     signature: Optional[str] = None  # Do we need to provide Claude Code a signature?
 
 
 class ToolUseBlock(BaseModel):
-    type: Literal["tool_use"]
+    type: Literal["tool_use"] = Field(default="tool_use", frozen=True)
     id: str
     input: dict
     name: str

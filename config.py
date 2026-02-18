@@ -15,13 +15,13 @@ class Settings(BaseSettings):
     model_name: str = "mlx-community/GLM-4.5-Air-3bit"
     trust_remote_code: bool = False
     eos_token: str | None = None
-    # The default chat_template came from:
-    # https://huggingface.co/zai-org/GLM-4.7-Flash/blob/main/chat_template.jinja
 
     # Generation settings
     claude_mlx_adapter: str
     default_max_tokens: int = 4096
     default_temperature: float = 1.0
+    max_kv_size: int | None = 8192
+    max_input_tokens: int | None = 8192
 
     # Verbosity
     verbose: bool = False

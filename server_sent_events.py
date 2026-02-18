@@ -1,9 +1,16 @@
 from abc import ABC
+import logging
+import json
+
+
+logger = logging.getLogger("uvicorn.error")
 
 
 class SSEvent(ABC):
     def emit(self):
-        return f"event: {self.type}\ndata: {self.data}\n\n"
+        logger.debug(f"Emitting event: {self.type} with data: {self.data}")
+        payload = json.dumps(self.data, ensure_ascii=False)
+        return f"event: {self.type}\ndata: {payload}\n\n"
 
 
 class MessageStartEvent(SSEvent):
@@ -54,7 +61,6 @@ class ContentBlockDeltaEvent(SSEvent):
 
 class ContentBlockStopEvent(SSEvent):
     def __init__(self, index=0):
-        print(f"Emitting ContentBlockStopEvent for index {index}")
         self.type = "content_block_stop"
         self.data = {"type": self.type, "index": index}
 

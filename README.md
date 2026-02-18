@@ -22,34 +22,34 @@ First, get the proxy server running on your machine.
 
 1. **Clone the repository:**
 
-    ```bash
-    git clone https://github.com/chand1012/claude-code-mlx-proxy.git
-    cd claude-code-mlx-proxy
-    ```
+   ```bash
+   git clone https://github.com/chand1012/claude-code-mlx-proxy.git
+   cd claude-code-mlx-proxy
+   ```
 
 2. **Set up the environment:**
-    Copy the example `.env` file:
+   Copy the example `.env` file:
 
-    ```bash
-    cp .env.example .env
-    ```
+   ```bash
+   cp .env.example .env
+   ```
 
-    You can edit the `.env` file to customize the model, port, and other settings (see Configuration section below).
+   You can edit the `.env` file to customize the model, port, and other settings (see Configuration section below).
 
 3. **Install dependencies:**
-    This project uses `uv` for fast package management.
+   This project uses `uv` for fast package management.
 
-    ```bash
-    uv sync
-    ```
+   ```bash
+   uv sync
+   ```
 
 4. **Start the server:**
 
-    ```bash
-    uv run main.py
-    ```
+   ```bash
+   uv run main.py
+   ```
 
-    The server will start on `http://localhost:8888` (or as configured in your `.env`) and begin downloading and loading the specified MLX model. This may take some time on the first run.
+   The server will start on `http://localhost:8888` (or as configured in your `.env`) and begin downloading and loading the specified MLX model. This may take some time on the first run.
 
 ### Part 2: Configure Claude Code
 
@@ -165,18 +165,20 @@ The server implements the following Claude-compatible endpoints:
 
 All server settings are managed through the `.env` file.
 
-| Variable              | Default                                       | Description                                                                                             |
-| --------------------- | --------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `HOST`                | `0.0.0.0`                                     | The host address for the server.                                                                        |
-| `PORT`                | `8888`                                        | The port for the server.                                                                                |
-| `MODEL_NAME`          | `mlx-community/GLM-4.5-Air-3bit`              | The MLX model to load from Hugging Face. Find more at the [MLX Community](https://huggingface.co/mlx-community). |
-| `API_MODEL_NAME`      | `claude-4-sonnet-20250514`                    | The model name that the API will report. Set this to a known Claude model to ensure client compatibility. |
-| `TRUST_REMOTE_CODE`   | `false`                                       | Set to `true` if the model tokenizer requires trusting remote code.                                     |
-| `EOS_TOKEN`           | `None`                                        | The End-of-Sequence token, required for some models like Qwen.               |
-| `DEFAULT_MAX_TOKENS`  | `4096`                                        | The default maximum number of tokens to generate in a response.                                         |
-| `DEFAULT_TEMPERATURE` | `1.0`                                         | The default temperature for generation (creativity).                                                    |
-| `DEFAULT_TOP_P`       | `1.0`                                         | The default top-p for generation.                                                                       |
-| `VERBOSE`             | `false`                                       | Set to `true` to enable verbose logging from the MLX generate function.                                 |
+| Variable              | Default                          | Description                                                                                                                               |
+| --------------------- | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `HOST`                | `0.0.0.0`                        | The host address for the server.                                                                                                          |
+| `PORT`                | `8888`                           | The port for the server.                                                                                                                  |
+| `MODEL_NAME`          | `mlx-community/GLM-4.5-Air-3bit` | The MLX model to load from Hugging Face. Find more at the [MLX Community](https://huggingface.co/mlx-community).                          |
+| `API_MODEL_NAME`      | `claude-4-sonnet-20250514`       | The model name that the API will report. Set this to a known Claude model to ensure client compatibility.                                 |
+| `TRUST_REMOTE_CODE`   | `false`                          | Set to `true` if the model tokenizer requires trusting remote code.                                                                       |
+| `EOS_TOKEN`           | `None`                           | The End-of-Sequence token, required for some models like Qwen.                                                                            |
+| `DEFAULT_MAX_TOKENS`  | `4096`                           | The default maximum number of tokens to generate in a response.                                                                           |
+| `DEFAULT_TEMPERATURE` | `1.0`                            | The default temperature for generation (creativity).                                                                                      |
+| `MAX_KV_SIZE`         | `8192`                           | Optional cap for KV cache size during generation. Lower values reduce memory usage and swap pressure at the cost of long-context quality. |
+| `MAX_INPUT_TOKENS`    | `8192`                           | Optional cap for input prompt tokens. When exceeded, only the most recent tokens are kept to reduce prefill latency and memory use.       |
+| `DEFAULT_TOP_P`       | `1.0`                            | The default top-p for generation.                                                                                                         |
+| `VERBOSE`             | `false`                          | Set to `true` to enable verbose logging from the MLX generate function.                                                                   |
 
 ## License
 

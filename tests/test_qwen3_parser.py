@@ -176,7 +176,7 @@ def test_structured_output_disables_continue_final_message():
     assert result.continue_final_message is False
 
 
-def test_system_instruction_can_enable_continue_final_message():
+def test_system_instruction_does_not_enable_continue_final_message():
     params = ClaudeMessageParams(
         max_tokens=256,
         model="test-model",
@@ -195,8 +195,28 @@ def test_system_instruction_can_enable_continue_final_message():
     )
 
     result: ChatParams = parser.parse_chat_params(params)
-    assert result.add_generation_prompt is False
-    assert result.continue_final_message is True
+    assert result.add_generation_prompt is True
+    assert result.continue_final_message is False
+
+
+def test_qwen3_sanitize_response_text_removes_orphan_think_tags():
+    text = "what is your name? </think>\n\nI am Claude Code"
+    sanitized = parser.sanitize_response_text(text)
+
+    assert "</think>" not in sanitized
+    assert "I am Claude Code" in sanitized
+
+
+def test_qwen3_stream_sanitizer_handles_split_closing_think_tag():
+    sanitizer = parser.create_stream_text_sanitizer()
+
+    out1 = sanitizer.push("what is your name? </t")
+    out2 = sanitizer.push("hink>\nI am Claude Code")
+    tail = sanitizer.finish()
+
+    result = out1 + out2 + tail
+    assert "</think>" not in result
+    assert "I am Claude Code" in result
 
 
 # TODO:

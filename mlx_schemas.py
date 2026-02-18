@@ -35,6 +35,7 @@ class ChatParams(BaseModel):
     tools: Optional[list[ToolUse]] = None
     max_tokens: int
     sampler_params: Optional[dict] = None
+    stop_sequences: Optional[list[str]] = None
     enable_thinking: bool = False
     request_model: str
     structured_output_requested: bool = False
