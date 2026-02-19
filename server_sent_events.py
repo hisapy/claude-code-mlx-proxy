@@ -32,12 +32,12 @@ class MessageStartEvent(SSEvent):
 
 
 class ContentBlockStartEvent(SSEvent):
-    def __init__(self, index=0):
+    def __init__(self, content_block: dict, index=0):
         self.type = "content_block_start"
         self.data = {
             "type": self.type,
             "index": index,
-            "content_block": {"type": "text", "text": ""},
+            "content_block": content_block,
         }
 
 
@@ -51,6 +51,10 @@ class ContentBlockDeltaEvent(SSEvent):
             delta["text"] = value
         elif type == "input_json_delta":
             delta["partial_json"] = value
+        elif type == "thinking_delta":
+            delta["thinking"] = value
+        elif type == "signature_delta":
+            delta["signature"] = value
 
         self.data = {
             "type": self.type,

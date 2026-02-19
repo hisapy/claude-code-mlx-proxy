@@ -1,11 +1,13 @@
 import re
+import json
 
-from base_chat_parser import BaseChatParser, StreamTextSanitizer
+from base_chat_parser import BaseChatParser, StreamSegmentParser
 from claude_schemas import (
     # Request models
     ClaudeMessageParams,
     TextBlockParam,
     ImageBlockParam,
+    ToolUseBlockParam,
     ToolResultBlockParam,
 )
 
@@ -47,8 +49,10 @@ class Parser(BaseChatParser):
     def sanitize_response_text(self, text: str) -> str:
         return _sanitize_qwen3_text(text).strip()
 
-    def create_stream_text_sanitizer(self) -> StreamTextSanitizer:
-        return _Qwen3StreamSanitizer()
+    def create_stream_segment_parser(
+        self, enable_thinking: bool = False
+    ) -> StreamSegmentParser:
+        return _Qwen3StreamSegmentParser(enable_thinking=enable_thinking)
 
     def default_stop_sequences(self) -> list[str]:
         return [_IM_END]
@@ -58,8 +62,6 @@ _THINK_OPEN = "<think>"
 _THINK_CLOSE = "</think>"
 _IM_START = "<|im_start|>"
 _IM_END = "<|im_end|>"
-_STREAM_MARKERS = (_THINK_OPEN, _THINK_CLOSE, _IM_START, _IM_END)
-_MAX_MARKER_LENGTH = max(len(marker) for marker in _STREAM_MARKERS + (_THINK_CLOSE,))
 
 
 def _sanitize_qwen3_text(text: str) -> str:
@@ -73,88 +75,206 @@ def _sanitize_qwen3_text(text: str) -> str:
     return sanitized
 
 
-class _Qwen3StreamSanitizer(StreamTextSanitizer):
-    def __init__(self):
+class _Qwen3StreamSegmentParser(StreamSegmentParser):
+    def __init__(self, enable_thinking: bool):
+        self.enable_thinking = enable_thinking
         self.buffer = ""
-        self.in_think_block = False
+        self.mode = "text"
+        self.strip_role_after_im_start = False
+        self.open_tags = {
+            "thinking": _THINK_OPEN,
+            "thinking_close": _THINK_CLOSE,
+            "tool": "<tool_call>",
+            "im_start": _IM_START,
+            "im_end": _IM_END,
+        }
+        self.close_tags = {"thinking": _THINK_CLOSE, "tool": "</tool_call>"}
+        self.max_tag_length = max(
+            len(tag)
+            for tag in [
+                self.open_tags["thinking"],
+                self.open_tags["tool"],
+                self.open_tags["im_start"],
+                self.open_tags["im_end"],
+                self.close_tags["thinking"],
+                self.close_tags["tool"],
+            ]
+        )
 
-    def push(self, chunk: str) -> str:
+    def push(self, chunk: str) -> list[dict]:
         if not chunk:
-            return ""
+            return []
 
         self.buffer += chunk
-        output_parts = []
+        return self._drain_buffer(final=False)
+
+    def finish(self) -> list[dict]:
+        return self._drain_buffer(final=True)
+
+    def _drain_buffer(self, final: bool) -> list[dict]:
+        segments: list[dict] = []
 
         while True:
-            if self.in_think_block:
-                close_index = self.buffer.find(_THINK_CLOSE)
-                if close_index == -1:
-                    self.buffer = self.buffer[-(len(_THINK_CLOSE) - 1) :]
+            if self.mode == "text":
+                if self.strip_role_after_im_start:
+                    role_match = re.match(r"^\s*\w+\s*", self.buffer)
+                    if role_match:
+                        self.buffer = self.buffer[role_match.end() :]
+                        self.strip_role_after_im_start = False
+                        continue
+
+                    if final:
+                        self.strip_role_after_im_start = False
+                    else:
+                        break
+
+                marker = self._find_next_open_marker()
+                if marker is None:
+                    if final:
+                        if self.buffer:
+                            segments.append({"kind": "text", "text": self.buffer})
+                            self.buffer = ""
+                        break
+
+                    if len(self.buffer) <= self.max_tag_length - 1:
+                        break
+                    emit = self.buffer[: -(self.max_tag_length - 1)]
+                    if emit:
+                        segments.append({"kind": "text", "text": emit})
+                    self.buffer = self.buffer[-(self.max_tag_length - 1) :]
                     break
-                self.buffer = self.buffer[close_index + len(_THINK_CLOSE) :]
-                self.in_think_block = False
+
+                marker_index, marker_type, marker_tag = marker
+                if marker_index > 0:
+                    segments.append(
+                        {"kind": "text", "text": self.buffer[:marker_index]}
+                    )
+                self.buffer = self.buffer[marker_index + len(marker_tag) :]
+
+                if marker_type == "im_start":
+                    self.strip_role_after_im_start = True
+                    continue
+
+                if marker_type == "thinking_close":
+                    continue
+
+                if marker_type == "im_end":
+                    continue
+
+                self.mode = marker_type
                 continue
 
-            marker = self._find_first_marker()
-            if marker is None:
-                if len(self.buffer) <= _MAX_MARKER_LENGTH - 1:
+            close_tag = self.close_tags[self.mode]
+            close_index = self.buffer.find(close_tag)
+
+            if close_index == -1:
+                if self.mode == "tool":
+                    if final:
+                        tool_segment = _tool_segment_from_payload(self.buffer)
+                        if tool_segment is not None:
+                            segments.append(tool_segment)
+                        else:
+                            wrapped = f"<tool_call>{self.buffer}</tool_call>"
+                            segments.append({"kind": "text", "text": wrapped})
+                        self.buffer = ""
+                        self.mode = "text"
                     break
-                safe_text = self.buffer[: -(_MAX_MARKER_LENGTH - 1)]
-                output_parts.append(safe_text)
-                self.buffer = self.buffer[-(_MAX_MARKER_LENGTH - 1) :]
+
+                if final:
+                    content = self.buffer
+                    self.buffer = ""
+                    self.mode = "text"
+                    if self.enable_thinking and content:
+                        segments.append({"kind": "thinking", "thinking": content})
+                    break
+
+                if len(self.buffer) <= len(close_tag) - 1:
+                    break
+
+                emit = self.buffer[: -(len(close_tag) - 1)]
+                if emit and self.enable_thinking:
+                    segments.append({"kind": "thinking", "thinking": emit})
+                self.buffer = self.buffer[-(len(close_tag) - 1) :]
                 break
 
-            index, token = marker
-            if index > 0:
-                output_parts.append(self.buffer[:index])
-                self.buffer = self.buffer[index:]
+            content = self.buffer[:close_index]
+            self.buffer = self.buffer[close_index + len(close_tag) :]
+            segment_kind = "thinking" if self.mode == "thinking" else "tool"
+            self.mode = "text"
 
-            if token == _THINK_OPEN:
-                self.buffer = self.buffer[len(_THINK_OPEN) :]
-                self.in_think_block = True
+            if segment_kind == "thinking":
+                if self.enable_thinking and content:
+                    segments.append({"kind": "thinking", "thinking": content})
                 continue
 
-            if token == _THINK_CLOSE:
-                self.buffer = self.buffer[len(_THINK_CLOSE) :]
-                continue
+            tool_segment = _tool_segment_from_payload(content)
+            if tool_segment is None:
+                wrapped = f"<tool_call>{content}</tool_call>"
+                segments.append({"kind": "text", "text": wrapped})
+            else:
+                segments.append(tool_segment)
 
-            if token == _IM_START:
-                self.buffer = self.buffer[len(_IM_START) :]
-                match = re.match(r"^\s*\w+\s*", self.buffer)
-                if match:
-                    self.buffer = self.buffer[match.end() :]
-                continue
+        return segments
 
-            if token == _IM_END:
-                self.buffer = self.buffer[len(_IM_END) :]
-                continue
+    def _find_next_open_marker(self):
+        candidates = []
+        for marker_type, marker_tag in self.open_tags.items():
+            index = self.buffer.find(marker_tag)
+            if index != -1:
+                candidates.append((index, marker_type, marker_tag))
 
-        return "".join(output_parts)
-
-    def finish(self) -> str:
-        if self.in_think_block:
-            self.buffer = ""
-            return ""
-
-        tail = _sanitize_qwen3_text(self.buffer)
-        self.buffer = ""
-        return tail
-
-    def _find_first_marker(self):
-        first_index = None
-        first_token = None
-        for token in _STREAM_MARKERS:
-            index = self.buffer.find(token)
-            if index == -1:
-                continue
-            if first_index is None or index < first_index:
-                first_index = index
-                first_token = token
-
-        if first_index is None:
+        if not candidates:
             return None
+        return min(candidates, key=lambda item: item[0])
 
-        return first_index, first_token
+
+def _tool_segment_from_payload(payload: str) -> dict | None:
+    try:
+        parsed = json.loads(payload)
+    except Exception:
+        return _tool_segment_from_malformed_payload(payload)
+
+    if not isinstance(parsed, dict):
+        return None
+
+    tool_name = parsed.get("name")
+    if not isinstance(tool_name, str) or not tool_name:
+        return None
+
+    tool_input = parsed.get("input")
+    if tool_input is None:
+        tool_input = parsed.get("arguments")
+    if tool_input is None:
+        tool_input = {}
+    if not isinstance(tool_input, dict):
+        return None
+
+    return {
+        "kind": "tool_use",
+        "name": tool_name,
+        "partial_json": json.dumps(tool_input, ensure_ascii=False),
+    }
+
+
+def _tool_segment_from_malformed_payload(payload: str) -> dict | None:
+    if not payload:
+        return None
+
+    tool_name_match = re.search(r'"name"\s*:\s*"([^"]+)"', payload)
+    if not tool_name_match:
+        return None
+
+    tool_name = tool_name_match.group(1).strip()
+    if not tool_name:
+        return None
+
+    # When arguments/input JSON is malformed or truncated, still emit a tool_use
+    # block with empty input so the client can request permission and recover.
+    return {
+        "kind": "tool_use",
+        "name": tool_name,
+        "partial_json": "{}",
+    }
 
 
 def _parse_messages(params: ClaudeMessageParams):
@@ -187,8 +307,13 @@ def _parse_system_prompt(claude_system_prompt):
 def _parse_conversation(claude_messages):
     messages = []
     for msg in claude_messages:
-        content_text = []
         role = msg.role
+
+        if isinstance(msg.content, str):
+            messages.append({"role": role, "content": msg.content})
+            continue
+
+        content_text = []
 
         for c in msg.content:
             if isinstance(c, str):
@@ -205,6 +330,11 @@ def _parse_conversation(claude_messages):
             elif isinstance(c, ToolResultBlockParam):
                 content_text.append(
                     f"<tool_response>{_parse_tool_result(c.content)}</tool_response>"
+                )
+
+            elif isinstance(c, ToolUseBlockParam):
+                content_text.append(
+                    f"<tool_call>{json.dumps({'name': c.name, 'arguments': c.input}, ensure_ascii=False)}</tool_call>"
                 )
 
             else:

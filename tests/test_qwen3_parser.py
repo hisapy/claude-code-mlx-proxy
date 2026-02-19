@@ -199,6 +199,48 @@ def test_system_instruction_does_not_enable_continue_final_message():
     assert result.continue_final_message is False
 
 
+def test_message_schema_accepts_tool_use_content_blocks():
+    params = ClaudeMessageParams(
+        max_tokens=256,
+        model="test-model",
+        messages=[
+            {"role": "user", "content": [{"type": "text", "text": "Hello"}]},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_123",
+                        "name": "Read",
+                        "input": {"file_path": "/workspace/README.md"},
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+            },
+        ],
+    )
+
+    assert params.messages[1].content[0].type == "tool_use"
+
+
+def test_parse_conversation_preserves_plain_string_content():
+    params = ClaudeMessageParams(
+        max_tokens=128,
+        model="test-model",
+        messages=[
+            {"role": "user", "content": "Use exactly one tool call. Read README.md."},
+            {
+                "role": "assistant",
+                "content": '<tool_call>{"name":"Read","arguments":{"file_path":"/tmp/README.md"}}</tool_call>',
+            },
+        ],
+    )
+
+    result: ChatParams = parser.parse_chat_params(params)
+    assert result.messages[0]["content"] == "Use exactly one tool call. Read README.md."
+    assert result.messages[1]["content"].startswith("<tool_call>")
+
+
 def test_qwen3_sanitize_response_text_removes_orphan_think_tags():
     text = "what is your name? </think>\n\nI am Claude Code"
     sanitized = parser.sanitize_response_text(text)
@@ -207,16 +249,66 @@ def test_qwen3_sanitize_response_text_removes_orphan_think_tags():
     assert "I am Claude Code" in sanitized
 
 
-def test_qwen3_stream_sanitizer_handles_split_closing_think_tag():
-    sanitizer = parser.create_stream_text_sanitizer()
+def test_qwen3_stream_segment_parser_handles_split_closing_think_tag():
+    parser_impl = parser.create_stream_segment_parser(enable_thinking=False)
 
-    out1 = sanitizer.push("what is your name? </t")
-    out2 = sanitizer.push("hink>\nI am Claude Code")
-    tail = sanitizer.finish()
+    out1 = parser_impl.push("what is your name? </t")
+    out2 = parser_impl.push("hink>\nI am Claude Code")
+    tail = parser_impl.finish()
 
-    result = out1 + out2 + tail
-    assert "</think>" not in result
-    assert "I am Claude Code" in result
+    segments = out1 + out2 + tail
+    text = "".join((segment.get("text") or "") for segment in segments)
+    assert "</think>" not in text
+    assert "I am Claude Code" in text
+
+
+def test_qwen3_stream_segment_parser_parses_split_tool_call_payload():
+    parser_impl = parser.create_stream_segment_parser(enable_thinking=False)
+
+    out1 = parser_impl.push('Before <tool_call>{"na')
+    out2 = parser_impl.push(
+        'me": "Read", "arguments": {"file_path": "/workspace/README.md"}}</tool_call> After'
+    )
+    tail = parser_impl.finish()
+
+    segments = out1 + out2 + tail
+    tool_segments = [s for s in segments if s.get("kind") == "tool_use"]
+    text_segments = [s for s in segments if s.get("kind") == "text"]
+
+    assert any((s.get("text") or "").startswith("Before") for s in text_segments)
+    assert any((s.get("text") or "").endswith("After") for s in text_segments)
+    assert len(tool_segments) == 1
+    assert tool_segments[0]["name"] == "Read"
+    assert "file_path" in tool_segments[0]["partial_json"]
+
+
+def test_qwen3_stream_segment_parser_recovers_malformed_tool_payload():
+    parser_impl = parser.create_stream_segment_parser(enable_thinking=False)
+
+    out1 = parser_impl.push('<tool_call>{"name": "ListFiles", "arguments": {"director')
+    out2 = parser_impl.push("<|im_end|>")
+    tail = parser_impl.finish()
+
+    segments = out1 + out2 + tail
+    tool_segments = [s for s in segments if s.get("kind") == "tool_use"]
+
+    assert len(tool_segments) == 1
+    assert tool_segments[0]["name"] == "ListFiles"
+    assert tool_segments[0]["partial_json"] == "{}"
+
+
+def test_qwen3_stream_segment_parser_emits_thinking_when_enabled():
+    parser_impl = parser.create_stream_segment_parser(enable_thinking=True)
+
+    segments = (
+        parser_impl.push("<think>Reason step</think>Final") + parser_impl.finish()
+    )
+    thinking_segments = [s for s in segments if s.get("kind") == "thinking"]
+    text_segments = [s for s in segments if s.get("kind") == "text"]
+
+    combined_thinking = "".join((s.get("thinking") or "") for s in thinking_segments)
+    assert "Reason step" in combined_thinking
+    assert any("Final" in (s.get("text") or "") for s in text_segments)
 
 
 # TODO:

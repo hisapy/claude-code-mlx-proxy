@@ -23,6 +23,14 @@ class ToolResultBlockParam(BaseModel):
     # TODO: add support for other types of ToolResult content
 
 
+class ToolUseBlockParam(BaseModel):
+    type: Literal["tool_use"]
+    id: str
+    name: str
+    input: Dict[str, Any]
+    cache_control: Optional[Dict[str, Any]] = None
+
+
 class Tool(BaseModel):
     name: str
     description: Optional[str] = None
@@ -32,6 +40,7 @@ class Tool(BaseModel):
 ContentBlockParam = Union[
     TextBlockParam,
     ImageBlockParam,
+    ToolUseBlockParam,
     ToolResultBlockParam,
 ]
 

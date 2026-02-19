@@ -24,6 +24,22 @@ class StreamTextSanitizer:
         return ""
 
 
+class StreamSegmentParser:
+    """Parses streamed model text into structured content segments.
+
+    Each segment is a dict with a `kind` key. Supported kinds are model-dependent,
+    but typically include `text`, `thinking`, and `tool_use`.
+    """
+
+    def push(self, chunk: str) -> list[dict[str, Any]]:
+        if not chunk:
+            return []
+        return [{"kind": "text", "text": chunk}]
+
+    def finish(self) -> list[dict[str, Any]]:
+        return []
+
+
 class BaseChatParser(ABC):
     """
     Interface for LLM-specific message formatting.
@@ -45,8 +61,15 @@ class BaseChatParser(ABC):
         """
         return text
 
-    def create_stream_text_sanitizer(self) -> StreamTextSanitizer:
+    def create_stream_text_sanitizer(
+        self, preserve_thinking: bool = False
+    ) -> StreamTextSanitizer:
         return StreamTextSanitizer()
+
+    def create_stream_segment_parser(
+        self, enable_thinking: bool = False
+    ) -> StreamSegmentParser:
+        return StreamSegmentParser()
 
     def default_stop_sequences(self) -> list[str]:
         return []

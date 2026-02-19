@@ -2,6 +2,8 @@ import uuid
 import time
 import logging
 import importlib
+import json
+import shlex
 from itertools import tee
 from contextlib import contextmanager
 
@@ -127,11 +129,85 @@ async def claude_chat_stream(model, tokenizer, chat_params: ClaudeMessageParams)
             prompt=prompt_input,
             **generation_kwargs,
         )
-        stream_sanitizer = claude_parser.create_stream_text_sanitizer()
+        available_tool_names = {
+            tool.get("function", {}).get("name")
+            for tool in (chat.tools or [])
+            if isinstance(tool, dict)
+        }
+        available_tool_names.discard(None)
+
+        segment_parser = claude_parser.create_stream_segment_parser(
+            enable_thinking=chat.enable_thinking
+        )
         text_stopper = _TextStopper(stop_sequences)
+        current_block_type = None
+        current_block_index = -1
+
+        async def emit_segment(segment: dict):
+            nonlocal current_block_type, current_block_index, matched_stop_sequence
+
+            segment_kind = segment.get("kind")
+            if segment_kind in {"text", "thinking"}:
+                segment_text = (
+                    segment.get("thinking", "")
+                    if segment_kind == "thinking"
+                    else segment.get("text", "")
+                )
+                emit_text, matched = text_stopper.push(segment_text)
+                if matched:
+                    matched_stop_sequence = matched
+                if not emit_text:
+                    return
+
+                target_block_type = "thinking" if segment_kind == "thinking" else "text"
+                delta_type = "thinking_delta" if segment_kind == "thinking" else "text_delta"
+
+                if current_block_type != target_block_type:
+                    if current_block_type is not None:
+                        yield ContentBlockStopEvent(index=current_block_index).emit()
+                    current_block_index += 1
+                    current_block_type = target_block_type
+                    content_block = (
+                        {"type": "thinking", "thinking": ""}
+                        if target_block_type == "thinking"
+                        else {"type": "text", "text": ""}
+                    )
+                    yield ContentBlockStartEvent(content_block, index=current_block_index).emit()
+
+                yield ContentBlockDeltaEvent(delta_type, emit_text, index=current_block_index).emit()
+                return
+
+            if segment_kind == "tool_use":
+                tool_name = segment.get("name")
+                partial_json = segment.get("partial_json", "")
+
+                tool_name, partial_json = _remap_unknown_tool_call(
+                    tool_name=tool_name,
+                    partial_json=partial_json,
+                    available_tool_names=available_tool_names,
+                )
+
+                if not tool_name:
+                    return
+
+                if current_block_type is not None:
+                    yield ContentBlockStopEvent(index=current_block_index).emit()
+                    current_block_type = None
+
+                current_block_index += 1
+                yield ContentBlockStartEvent(
+                    {
+                        "type": "tool_use",
+                        "id": generate_response_id(prefix="toolu"),
+                        "name": tool_name,
+                        "input": {},
+                    },
+                    index=current_block_index,
+                ).emit()
+                yield ContentBlockDeltaEvent("input_json_delta", partial_json, index=current_block_index).emit()
+                yield ContentBlockStopEvent(index=current_block_index).emit()
 
         # We need to "peek" the first item to get the first usage
-        # The usage is accumulative
         it1, it2 = tee(response_generator)
         first_response = next(it1, None)
         if first_response is not None:
@@ -145,11 +221,7 @@ async def claude_chat_stream(model, tokenizer, chat_params: ClaudeMessageParams)
         id = generate_response_id()
         yield MessageStartEvent(id, model=chat.request_model, usage=usage).emit()
 
-        # TODO: emit tool_use and thinking ContentBlockStartEvent
-        yield ContentBlockStartEvent().emit()
-
         if first_response is None:
-            yield ContentBlockStopEvent().emit()
             yield MessageDeltaEvent("end_turn", usage=usage).emit()
             yield MessageStopEvent().emit()
             return
@@ -157,30 +229,24 @@ async def claude_chat_stream(model, tokenizer, chat_params: ClaudeMessageParams)
         matched_stop_sequence = None
         for response in it2:
             profiler["last_response"] = response
-            cleaned = stream_sanitizer.push(response.text)
-            if cleaned:
-                emit_text, matched = text_stopper.push(cleaned)
-                if emit_text:
-                    yield ContentBlockDeltaEvent("text_delta", emit_text).emit()
-                if matched:
-                    matched_stop_sequence = matched
-                    break
+            for segment in segment_parser.push(response.text):
+                async for event in emit_segment(segment):
+                    yield event
+            if matched_stop_sequence:
+                break
+
+        for segment in segment_parser.finish():
+            async for event in emit_segment(segment):
+                yield event
 
         if matched_stop_sequence is None:
-            tail = stream_sanitizer.finish()
+            tail = text_stopper.finish()
             if tail:
-                emit_text, matched = text_stopper.push(tail)
-                if emit_text:
-                    yield ContentBlockDeltaEvent("text_delta", emit_text).emit()
-                if matched:
-                    matched_stop_sequence = matched
+                async for event in emit_segment({"kind": "text", "text": tail}):
+                    yield event
 
-            if matched_stop_sequence is None:
-                remaining = text_stopper.finish()
-                if remaining:
-                    yield ContentBlockDeltaEvent("text_delta", remaining).emit()
-
-        yield ContentBlockStopEvent().emit()
+        if current_block_type is not None:
+            yield ContentBlockStopEvent(index=current_block_index).emit()
 
         usage = {
             "input_tokens": response.prompt_tokens,
@@ -361,6 +427,67 @@ def _resolve_max_tokens(requested: int) -> int:
     if settings.default_max_tokens and settings.default_max_tokens > 0:
         return max(1, min(requested, settings.default_max_tokens))
     return max(1, requested)
+
+
+def _remap_unknown_tool_call(
+    tool_name: str | None,
+    partial_json: str,
+    available_tool_names: set[str],
+) -> tuple[str | None, str]:
+    if not tool_name:
+        return tool_name, partial_json
+
+    if tool_name in available_tool_names:
+        return tool_name, partial_json
+
+    alias_map = {
+        "ListFiles": "Bash",
+        "ListDirectory": "Bash",
+        "ls": "Bash",
+        "ReadFile": "Read",
+    }
+
+    mapped_tool = alias_map.get(tool_name)
+    if not mapped_tool or mapped_tool not in available_tool_names:
+        return tool_name, partial_json
+
+    logger.debug(
+        "Remapping unsupported tool call '%s' -> '%s'",
+        tool_name,
+        mapped_tool,
+    )
+
+    parsed_input = {}
+    if partial_json:
+        try:
+            maybe_dict = json.loads(partial_json)
+            if isinstance(maybe_dict, dict):
+                parsed_input = maybe_dict
+        except Exception:
+            parsed_input = {}
+
+    if mapped_tool == "Bash":
+        directory = parsed_input.get("directory") or parsed_input.get("path") or "."
+        if not isinstance(directory, str) or not directory.strip():
+            directory = "."
+
+        command = f"ls -la -- {shlex.quote(directory)}"
+        mapped_input = {
+            "command": command,
+            "description": "List files in directory",
+        }
+        return mapped_tool, json.dumps(mapped_input, ensure_ascii=False)
+
+    if mapped_tool == "Read":
+        file_path = (
+            parsed_input.get("file_path")
+            or parsed_input.get("path")
+            or parsed_input.get("file")
+        )
+        if isinstance(file_path, str) and file_path:
+            return mapped_tool, json.dumps({"file_path": file_path}, ensure_ascii=False)
+
+    return tool_name, partial_json
 
 
 class _TextStopper:
